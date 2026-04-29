@@ -62,6 +62,8 @@ ObjectSetInteger(0, buttonName, OBJPROP_YDISTANCE, 20);
 int OnInit()
   {
 //---
+   if(!InitIndicators())
+      return(INIT_FAILED);
    CreateAcceptButton();
 //---
    return(INIT_SUCCEEDED);
@@ -71,6 +73,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   ReleaseIndicators();
    ObjectDelete(0, "BTN_ACCEPT_SIGNAL");
 }
   
