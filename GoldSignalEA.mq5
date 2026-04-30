@@ -17,7 +17,7 @@ input bool AutoTrade = true;          // parfait pour tester
 input double FinalTPMultiplier = 2.0;  // bon ratio TP final
 input double MaxSpread = 50;           // OK pour XAUUSD selon broker
 input int CooldownMinutes = 15;        // bon anti-surtrading
-input bool UseSessionFilter = false;
+input bool UseSessionFilter = true;
 input int LondonStartHour = 8;
 input int NewYorkEndHour = 17;
 input double MinConfidence = 80.0;
@@ -44,16 +44,14 @@ void CreateAcceptButton()
    if(ObjectFind(0, buttonName) >= 0)
       return;
 
+   ObjectCreate(0, buttonName, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, buttonName, OBJPROP_CORNER,    CORNER_RIGHT_UPPER);
    ObjectSetInteger(0, buttonName, OBJPROP_XDISTANCE, 20);
-   ObjectSetInteger(0, buttonName, OBJPROP_YDISTANCE, 180);
-   ObjectSetInteger(0, buttonName, OBJPROP_XSIZE, 120);
-   ObjectSetInteger(0, buttonName, OBJPROP_YSIZE, 24);
-   ObjectSetString(0, buttonName, OBJPROP_TEXT, "ACCEPTER");
-   ObjectSetInteger(0, buttonName, OBJPROP_FONTSIZE, 8);
-   
-   ObjectSetInteger(0, buttonName, OBJPROP_CORNER, CORNER_RIGHT_UPPER);
-ObjectSetInteger(0, buttonName, OBJPROP_XDISTANCE, 20);
-ObjectSetInteger(0, buttonName, OBJPROP_YDISTANCE, 20);
+   ObjectSetInteger(0, buttonName, OBJPROP_YDISTANCE, 20);
+   ObjectSetInteger(0, buttonName, OBJPROP_XSIZE,     120);
+   ObjectSetInteger(0, buttonName, OBJPROP_YSIZE,     30);
+   ObjectSetString(0,  buttonName, OBJPROP_TEXT,      "ACCEPTER");
+   ObjectSetInteger(0, buttonName, OBJPROP_FONTSIZE,  9);
 }
 
 //+------------------------------------------------------------------+
