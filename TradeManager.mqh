@@ -25,12 +25,36 @@ bool HasOpenTrade(int magicNumber)
    return false;
 }
 
+bool HasPendingOrder(int magicNumber)
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+
+      if(OrderSelect(ticket))
+      {
+         if(OrderGetInteger(ORDER_MAGIC) == magicNumber &&
+            OrderGetString(ORDER_SYMBOL) == _Symbol)
+         {
+            return true;
+         }
+      }
+   }
+
+   return false;
+}
+
+bool HasActiveTradeOrOrder(int magicNumber)
+{
+   return HasOpenTrade(magicNumber) || HasPendingOrder(magicNumber);
+}
+
 bool OpenSignalTrade(const SignalResult &signal, double lot, int magicNumber, double finalTPMultiplier)
 {
    if(signal.action == SIGNAL_WAIT)
       return false;
 
-   if(HasOpenTrade(magicNumber))
+   if(HasActiveTradeOrOrder(magicNumber))
       return false;
 
    trade.SetExpertMagicNumber(magicNumber);

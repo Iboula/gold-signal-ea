@@ -1,0 +1,15 @@
+*.log
+__pycache__/
+.env.vps
+GoldSignalEA_Journal.csv
+GoldSignalEA_Trades.csv
+GoldSignalBot_Alerts.csv
+GoldSignalBot_Signals.csv
+GoldSignalBot_Executions.csv
+gold-signal-bot/.env
+gold-signal-bot/.venv/
+gold-signal-bot/GoldSignalBot_Alerts.csv
+gold-signal-bot/GoldSignalBot_Signals.csv
+gold-signal-bot/GoldSignalBot_Executions.csv
+gold-signal-bot/logs/
+gold-signal-bot/__pycache__/
