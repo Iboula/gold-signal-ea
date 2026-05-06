@@ -13,3 +13,4 @@ gold-signal-bot/GoldSignalBot_Signals.csv
 gold-signal-bot/GoldSignalBot_Executions.csv
 gold-signal-bot/logs/
 gold-signal-bot/__pycache__/
+scripts/backtest-results/
