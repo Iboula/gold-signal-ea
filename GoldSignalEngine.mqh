@@ -20,353 +20,925 @@ struct SignalResult
    string reason;
 };
 
-// -----------------------------------------------------------------------
-// Handles globaux — initialises une seule fois dans OnInit
-// -----------------------------------------------------------------------
-int g_hEMA20_M15  = INVALID_HANDLE;  // Trend M15 rapide
-int g_hEMA50_M15  = INVALID_HANDLE;  // Trend M15 lent
-int g_hEMA200_H1  = INVALID_HANDLE;  // Direction majeure H1 (filtre principal)
-int g_hRSI_M5     = INVALID_HANDLE;  // Oscillateur M5
-int g_hBB_M5      = INVALID_HANDLE;  // Bandes de Bollinger M5 (20, 2.0)
-int g_hMACD_M5    = INVALID_HANDLE;  // MACD M5 (12/26/9)
-int g_hATR_M5     = INVALID_HANDLE;  // Volatilite M5
-int g_hATR_H1     = INVALID_HANDLE;  // Volatilite H1 (contexte)
-
-bool InitIndicators()
+double GetRecentHigh(int candles, int startShift)
 {
-   g_hEMA20_M15 = iMA(_Symbol, PERIOD_M15, 20,  0, MODE_EMA, PRICE_CLOSE);
-   g_hEMA50_M15 = iMA(_Symbol, PERIOD_M15, 50,  0, MODE_EMA, PRICE_CLOSE);
-   g_hEMA200_H1 = iMA(_Symbol, PERIOD_H1,  200, 0, MODE_EMA, PRICE_CLOSE);
-   g_hRSI_M5    = iRSI(_Symbol, PERIOD_M5, 14, PRICE_CLOSE);
-   g_hBB_M5     = iBands(_Symbol, PERIOD_M5, 20, 0, 2.0, PRICE_CLOSE);
-   g_hMACD_M5   = iMACD(_Symbol, PERIOD_M5, 12, 26, 9, PRICE_CLOSE);
-   g_hATR_M5    = iATR(_Symbol, PERIOD_M5, 14);
-   g_hATR_H1    = iATR(_Symbol, PERIOD_H1, 14);
+   if(candles <= 0 || startShift < 1)
+      return 0.0;
 
-   if(g_hEMA20_M15 == INVALID_HANDLE || g_hEMA50_M15 == INVALID_HANDLE ||
-      g_hEMA200_H1 == INVALID_HANDLE || g_hRSI_M5    == INVALID_HANDLE ||
-      g_hBB_M5     == INVALID_HANDLE || g_hMACD_M5   == INVALID_HANDLE ||
-      g_hATR_M5    == INVALID_HANDLE || g_hATR_H1    == INVALID_HANDLE)
-   {
-      Print("Erreur initialisation indicateurs: ", GetLastError());
-      return false;
-   }
-   return true;
-}
+   double high = iHigh(_Symbol, PERIOD_M5, startShift);
 
-void ReleaseIndicators()
-{
-   if(g_hEMA20_M15 != INVALID_HANDLE){ IndicatorRelease(g_hEMA20_M15); g_hEMA20_M15 = INVALID_HANDLE; }
-   if(g_hEMA50_M15 != INVALID_HANDLE){ IndicatorRelease(g_hEMA50_M15); g_hEMA50_M15 = INVALID_HANDLE; }
-   if(g_hEMA200_H1 != INVALID_HANDLE){ IndicatorRelease(g_hEMA200_H1); g_hEMA200_H1 = INVALID_HANDLE; }
-   if(g_hRSI_M5    != INVALID_HANDLE){ IndicatorRelease(g_hRSI_M5);    g_hRSI_M5    = INVALID_HANDLE; }
-   if(g_hBB_M5     != INVALID_HANDLE){ IndicatorRelease(g_hBB_M5);     g_hBB_M5     = INVALID_HANDLE; }
-   if(g_hMACD_M5   != INVALID_HANDLE){ IndicatorRelease(g_hMACD_M5);   g_hMACD_M5   = INVALID_HANDLE; }
-   if(g_hATR_M5    != INVALID_HANDLE){ IndicatorRelease(g_hATR_M5);    g_hATR_M5    = INVALID_HANDLE; }
-   if(g_hATR_H1    != INVALID_HANDLE){ IndicatorRelease(g_hATR_H1);    g_hATR_H1    = INVALID_HANDLE; }
-}
-
-// -----------------------------------------------------------------------
-// Lecture generique d'un buffer d'indicateur
-// -----------------------------------------------------------------------
-double GetIndValue(int handle, int bufferIdx, int shift)
-{
-   if(handle == INVALID_HANDLE) return 0.0;
-   double buf[];
-   if(CopyBuffer(handle, bufferIdx, shift, 1, buf) <= 0) return 0.0;
-   return buf[0];
-}
-
-// Accesseurs
-double GetRSI(int shift = 1)       { return GetIndValue(g_hRSI_M5,    0, shift); }
-double GetBBUpper(int shift = 1)   { return GetIndValue(g_hBB_M5,     1, shift); }
-double GetBBLower(int shift = 1)   { return GetIndValue(g_hBB_M5,     2, shift); }
-double GetBBMiddle(int shift = 1)  { return GetIndValue(g_hBB_M5,     0, shift); }
-double GetMACDMain(int shift = 1)  { return GetIndValue(g_hMACD_M5,   0, shift); }
-double GetATR(int shift = 1)       { return GetIndValue(g_hATR_M5,    0, shift); }
-double GetATRH1(int shift = 1)     { return GetIndValue(g_hATR_H1,    0, shift); }
-double GetEMA200H1(int shift = 1)  { return GetIndValue(g_hEMA200_H1, 0, shift); }
-
-// -----------------------------------------------------------------------
-// Filtres de tendance
-// H1 EMA200 : direction MAJEURE (or en tendance baissiere = seulement SELL)
-// M15 EMA20/50 : tendance intermediaire
-// -----------------------------------------------------------------------
-bool IsH1BullishMajor()
-{
-   double ema200 = GetEMA200H1(1);
-   double bid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   return ema200 > 0 && bid > ema200;
-}
-
-bool IsH1BearishMajor()
-{
-   double ema200 = GetEMA200H1(1);
-   double bid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   return ema200 > 0 && bid < ema200;
-}
-
-bool IsM15BullishTrend()
-{
-   double ema20 = GetIndValue(g_hEMA20_M15, 0, 1);
-   double ema50 = GetIndValue(g_hEMA50_M15, 0, 1);
-   return ema20 > 0 && ema50 > 0 && ema20 > ema50;
-}
-
-bool IsM15BearishTrend()
-{
-   double ema20 = GetIndValue(g_hEMA20_M15, 0, 1);
-   double ema50 = GetIndValue(g_hEMA50_M15, 0, 1);
-   return ema20 > 0 && ema50 > 0 && ema20 < ema50;
-}
-
-// Largeur BB : mesure la volatilite courante
-double GetBBWidth(int shift = 1)
-{
-   double upper = GetBBUpper(shift);
-   double lower = GetBBLower(shift);
-   return upper > 0 && lower > 0 ? (upper - lower) : 0.0;
-}
-
-// -----------------------------------------------------------------------
-// Helpers bougies
-// -----------------------------------------------------------------------
-double GetRecentHigh(int candles)
-{
-   double high = iHigh(_Symbol, PERIOD_M5, 1);
-   for(int i = 2; i <= candles; i++)
+   for(int i = startShift + 1; i < startShift + candles; i++)
    {
       double h = iHigh(_Symbol, PERIOD_M5, i);
-      if(h > high) high = h;
+      if(h > high)
+         high = h;
    }
+
    return high;
 }
 
-double GetRecentLow(int candles)
+double GetRecentLow(int candles, int startShift)
 {
-   double low = iLow(_Symbol, PERIOD_M5, 1);
-   for(int i = 2; i <= candles; i++)
+   if(candles <= 0 || startShift < 1)
+      return 0.0;
+
+   double low = iLow(_Symbol, PERIOD_M5, startShift);
+
+   for(int i = startShift + 1; i < startShift + candles; i++)
    {
       double l = iLow(_Symbol, PERIOD_M5, i);
-      if(l < low) low = l;
+      if(l < low)
+         low = l;
    }
+
    return low;
 }
 
 bool IsStrongBullishCandle()
 {
-   double open  = iOpen(_Symbol,  PERIOD_M5, 1);
+   double open = iOpen(_Symbol, PERIOD_M5, 1);
    double close = iClose(_Symbol, PERIOD_M5, 1);
-   double high  = iHigh(_Symbol,  PERIOD_M5, 1);
-   double low   = iLow(_Symbol,   PERIOD_M5, 1);
-   double body  = MathAbs(close - open);
+   double high = iHigh(_Symbol, PERIOD_M5, 1);
+   double low = iLow(_Symbol, PERIOD_M5, 1);
+
+   double body = MathAbs(close - open);
    double range = high - low;
-   if(range <= 0) return false;
+
+   if(range <= 0)
+      return false;
+
    return close > open && body >= range * 0.60;
 }
 
 bool IsStrongBearishCandle()
 {
-   double open  = iOpen(_Symbol,  PERIOD_M5, 1);
+   double open = iOpen(_Symbol, PERIOD_M5, 1);
    double close = iClose(_Symbol, PERIOD_M5, 1);
-   double high  = iHigh(_Symbol,  PERIOD_M5, 1);
-   double low   = iLow(_Symbol,   PERIOD_M5, 1);
-   double body  = MathAbs(close - open);
+   double high = iHigh(_Symbol, PERIOD_M5, 1);
+   double low = iLow(_Symbol, PERIOD_M5, 1);
+
+   double body = MathAbs(close - open);
    double range = high - low;
-   if(range <= 0) return false;
+
+   if(range <= 0)
+      return false;
+
    return close < open && body >= range * 0.60;
 }
 
-// -----------------------------------------------------------------------
-// AnalyzeMarket — 4 setups avec filtres en cascade
-//
-// SETUP 1 & 2 : Mean-Reversion BB+RSI (inspire BBRSI XAUUSD-5M)
-//   - RSI croise 25/75 (seuil plus strict : signaux plus rares, meilleure qualite)
-//   - Prix repasse le BB lower/upper
-//   - Filtre H1 EMA200 OBLIGATOIRE (direction majeure)
-//   - SL = 1.0*ATR (plus large = moins de stops sur le bruit)
-//   - TP = 2.0*SL  (RR 1:2)
-//
-// SETUP 3 & 4 : Cassure de range avec 3 conditions obligatoires
-//   - Cassure H/L 20 bougies + bougie forte + EMA M15 + MACD dans la direction
-//   - Prix au-dela du BB Middle (confirme la pression directionnelle)
-//   - Filtre H1 EMA200 OBLIGATOIRE
-//   - Filtre ATR minimum : ne pas trader si trop calme (ATR < 0.2*ATR_H1)
-//   - SL = 1.0*ATR | TP = 2.0*SL
-// -----------------------------------------------------------------------
-SignalResult AnalyzeMarket()
+bool IsRejectionFromResistance(double resistance)
+{
+   double open = iOpen(_Symbol, PERIOD_M5, 1);
+   double close = iClose(_Symbol, PERIOD_M5, 1);
+   double high = iHigh(_Symbol, PERIOD_M5, 1);
+   double low = iLow(_Symbol, PERIOD_M5, 1);
+
+   double upperWick = high - MathMax(open, close);
+   double range = high - low;
+
+   if(range <= 0)
+      return false;
+
+   return high >= resistance && close < resistance && upperWick >= range * 0.40;
+}
+
+bool IsRejectionFromSupport(double support)
+{
+   double open = iOpen(_Symbol, PERIOD_M5, 1);
+   double close = iClose(_Symbol, PERIOD_M5, 1);
+   double high = iHigh(_Symbol, PERIOD_M5, 1);
+   double low = iLow(_Symbol, PERIOD_M5, 1);
+
+   double lowerWick = MathMin(open, close) - low;
+   double range = high - low;
+
+   if(range <= 0)
+      return false;
+
+   return low <= support && close > support && lowerWick >= range * 0.40;
+}
+
+bool IsBullishClose()
+{
+   double open = iOpen(_Symbol, PERIOD_M5, 1);
+   double close = iClose(_Symbol, PERIOD_M5, 1);
+
+   return close > open;
+}
+
+bool IsBearishClose()
+{
+   double open = iOpen(_Symbol, PERIOD_M5, 1);
+   double close = iClose(_Symbol, PERIOD_M5, 1);
+
+   return close < open;
+}
+
+double GetEMAValue(ENUM_TIMEFRAMES timeframe, int period, int shift)
+{
+   int handle = iMA(_Symbol, timeframe, period, 0, MODE_EMA, PRICE_CLOSE);
+
+   if(handle == INVALID_HANDLE)
+      return 0.0;
+
+   double buffer[];
+
+   if(CopyBuffer(handle, 0, shift, 1, buffer) <= 0)
+   {
+      IndicatorRelease(handle);
+      return 0.0;
+   }
+
+   IndicatorRelease(handle);
+
+   return buffer[0];
+}
+
+bool IsM15BullishTrend()
+{
+   double ema20 = GetEMAValue(PERIOD_M15, 20, 1);
+   double ema50 = GetEMAValue(PERIOD_M15, 50, 1);
+
+   if(ema20 <= 0 || ema50 <= 0)
+      return false;
+
+   return ema20 > ema50;
+}
+
+bool IsM15BearishTrend()
+{
+   double ema20 = GetEMAValue(PERIOD_M15, 20, 1);
+   double ema50 = GetEMAValue(PERIOD_M15, 50, 1);
+
+   if(ema20 <= 0 || ema50 <= 0)
+      return false;
+
+   return ema20 < ema50;
+}
+
+double GetRSIValue(ENUM_TIMEFRAMES timeframe, int period, int shift)
+{
+   int handle = iRSI(_Symbol, timeframe, period, PRICE_CLOSE);
+
+   if(handle == INVALID_HANDLE)
+      return 50.0;
+
+   double buffer[];
+
+   if(CopyBuffer(handle, 0, shift, 1, buffer) <= 0)
+   {
+      IndicatorRelease(handle);
+      return 50.0;
+   }
+
+   IndicatorRelease(handle);
+
+   return buffer[0];
+}
+
+double GetATRValue(ENUM_TIMEFRAMES timeframe, int period, int shift)
+{
+   int handle = iATR(_Symbol, timeframe, period);
+
+   if(handle == INVALID_HANDLE)
+      return 0.0;
+
+   double buffer[];
+
+   if(CopyBuffer(handle, 0, shift, 1, buffer) <= 0)
+   {
+      IndicatorRelease(handle);
+      return 0.0;
+   }
+
+   IndicatorRelease(handle);
+
+   return buffer[0];
+}
+
+double GetCappedStopDistance(double structuralDistance, double atrValue, double atrMultiplier, double maxStopPoints)
+{
+   double stopDistance = structuralDistance;
+
+   if(atrValue > 0 && atrMultiplier > 0)
+      stopDistance = MathMin(stopDistance, atrValue * atrMultiplier);
+
+   if(maxStopPoints > 0)
+      stopDistance = MathMin(stopDistance, maxStopPoints * _Point);
+
+   return MathMax(stopDistance, _Point);
+}
+
+SignalResult EmptySignal(string reason)
 {
    SignalResult signal;
-   signal.action     = SIGNAL_WAIT;
-   signal.entry      = 0;
-   signal.sl         = 0;
-   signal.tp1        = 0;
+
+   signal.action = SIGNAL_WAIT;
+   signal.entry = 0;
+   signal.sl = 0;
+   signal.tp1 = 0;
    signal.confidence = 0;
-   signal.reason     = "Pas de setup clair";
+   signal.reason = reason;
 
-   double close   = iClose(_Symbol, PERIOD_M5, 1);
-   double close2  = iClose(_Symbol, PERIOD_M5, 2);
-   double bid     = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double ask     = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   return signal;
+}
 
-   double rsi1    = GetRSI(1);
-   double rsi2    = GetRSI(2);
-   double bbUp1   = GetBBUpper(1);
-   double bbUp2   = GetBBUpper(2);
-   double bbLo1   = GetBBLower(1);
-   double bbLo2   = GetBBLower(2);
-   double bbMid1  = GetBBMiddle(1);
-   double macd1   = GetMACDMain(1);
-   double macd2   = GetMACDMain(2);
-   double atr     = GetATR(1);
-   double atrH1   = GetATRH1(1);
+SignalResult BuildBuySignal(
+   double entry,
+   double structuralSL,
+   double atr,
+   bool useAtrStopCap,
+   double atrStopMultiplier,
+   double maxStopDistancePoints,
+   string reason
+)
+{
+   SignalResult signal;
 
-   // Fallback si ATR non disponible
-   if(atr   <= 0) atr   = 50.0 * _Point;
-   if(atrH1 <= 0) atrH1 = 200.0 * _Point;
+   signal.action = SIGNAL_BUY;
+   signal.entry = entry;
 
-   double slDistance = atr * 1.0;    // SL = 1 ATR (anterieur : 0.5)
-   double tpRatio    = 2.0;          // TP = 2x SL (anterieur : 1.5)
+   double stopDistance = MathAbs(signal.entry - structuralSL);
 
-   // Filtre volatilite : ne pas trader si ATR M5 < 20% de l'ATR H1
-   // Evite les periodes trop calmes (nuit asiatique sur l'or)
-   bool marketActive = (atr >= atrH1 * 0.20);
+   if(useAtrStopCap)
+      stopDistance = GetCappedStopDistance(stopDistance, atr, atrStopMultiplier, maxStopDistancePoints);
 
-   bool bullMajor = IsH1BullishMajor();
-   bool bearMajor = IsH1BearishMajor();
-   bool bullM15   = IsM15BullishTrend();
-   bool bearM15   = IsM15BearishTrend();
+   signal.sl = signal.entry - stopDistance;
+   signal.tp1 = signal.entry + ((signal.entry - signal.sl) * 1.5);
+   signal.confidence = 80;
+   signal.reason = reason;
 
-   if(!marketActive)
+   return signal;
+}
+
+SignalResult BuildSellSignal(
+   double entry,
+   double structuralSL,
+   double atr,
+   bool useAtrStopCap,
+   double atrStopMultiplier,
+   double maxStopDistancePoints,
+   string reason
+)
+{
+   SignalResult signal;
+
+   signal.action = SIGNAL_SELL;
+   signal.entry = entry;
+
+   double stopDistance = MathAbs(structuralSL - signal.entry);
+
+   if(useAtrStopCap)
+      stopDistance = GetCappedStopDistance(stopDistance, atr, atrStopMultiplier, maxStopDistancePoints);
+
+   signal.sl = signal.entry + stopDistance;
+   signal.tp1 = signal.entry - ((signal.sl - signal.entry) * 1.5);
+   signal.confidence = 80;
+   signal.reason = reason;
+
+   return signal;
+}
+
+SignalResult AnalyzeImmediateMarket(
+   int breakoutLookback,
+   double stopBuffer,
+   double breakoutConfirmPoints,
+   double buyRsiMin,
+   double buyRsiMax,
+   double sellRsiMin,
+   double sellRsiMax,
+   bool allowBuySignals,
+   bool allowSellSignals,
+   bool useAtrStopCap,
+   int atrStopPeriod,
+   double atrStopMultiplier,
+   double maxStopDistancePoints
+)
+{
+   SignalResult signal = EmptySignal("Pas de setup clair");
+
+   int lookback = breakoutLookback < 2 ? 2 : breakoutLookback;
+   double buffer = MathMax(_Point, stopBuffer);
+   double confirmDistance = MathMax(0.0, breakoutConfirmPoints) * _Point;
+
+   double recentHigh = GetRecentHigh(lookback, 2);
+   double recentLow = GetRecentLow(lookback, 2);
+   double rsi = GetRSIValue(PERIOD_M5, 14, 1);
+   double atr = useAtrStopCap ? GetATRValue(PERIOD_M5, atrStopPeriod, 1) : 0.0;
+
+   double close = iClose(_Symbol, PERIOD_M5, 1);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   if(allowBuySignals &&
+      recentHigh > 0 &&
+      close > recentHigh + confirmDistance &&
+      IsStrongBullishCandle() &&
+      IsM15BullishTrend() &&
+      rsi >= buyRsiMin &&
+      rsi <= buyRsiMax)
    {
-      signal.reason = "Marche trop calme (ATR faible)";
-      return signal;
+      double structuralSL = recentHigh - buffer;
+
+      return BuildBuySignal(
+         ask,
+         structuralSL,
+         atr,
+         useAtrStopCap,
+         atrStopMultiplier,
+         maxStopDistancePoints,
+         "Cassure haussiere M5 confirmee avec RSI et stop dynamique"
+      );
    }
 
-   // -------------------------------------------------------
-   // SETUP 1 : Mean Reversion BUY (BB+RSI)
-   // Conditions obligatoires :
-   //   - RSI < 25 sur bougie 2, RSI > 25 sur bougie 1 (croisement haussier)
-   //   - Close 2 sous BB Lower, Close 1 au-dessus
-   //   - H1 EMA200 : prix AU-DESSUS (zone haussiere majeure)
-   // -------------------------------------------------------
-   if(bullMajor && rsi2 < 25.0 && close2 < bbLo2 && rsi1 > 25.0 && close > bbLo1)
+   if(allowSellSignals &&
+      recentLow > 0 &&
+      close < recentLow - confirmDistance &&
+      IsStrongBearishCandle() &&
+      IsM15BearishTrend() &&
+      rsi >= sellRsiMin &&
+      rsi <= sellRsiMax)
    {
-      double conf = 72.0;
-      string reasons = "BB+RSI oversold (RSI<25)";
+      double structuralSL = recentLow + buffer;
 
-      if(bullM15)               { conf += 8.0;  reasons += " | EMA M15 haussier"; }
-      if(macd1 > 0)             { conf += 5.0;  reasons += " | MACD>0"; }
-      if(macd1 > macd2)         { conf += 3.0;  reasons += " | MACD hausse"; }
-      if(IsStrongBullishCandle()){ conf += 5.0; reasons += " | bougie forte"; }
-      if(rsi2 < 20.0)           { conf += 2.0;  reasons += " | RSI extreme"; }
-
-      signal.action     = SIGNAL_BUY;
-      signal.entry      = ask;
-      signal.sl         = bbLo1 - slDistance;
-      signal.tp1        = ask + MathAbs(ask - signal.sl) * tpRatio;
-      signal.confidence = MathMin(conf, 95.0);
-      signal.reason     = reasons;
-      return signal;
-   }
-
-   // -------------------------------------------------------
-   // SETUP 2 : Mean Reversion SELL (BB+RSI)
-   // Conditions obligatoires :
-   //   - RSI > 75 sur bougie 2, RSI < 75 sur bougie 1 (croisement baissier)
-   //   - Close 2 au-dessus BB Upper, Close 1 en-dessous
-   //   - H1 EMA200 : prix EN-DESSOUS (zone baissiere majeure)
-   // -------------------------------------------------------
-   if(bearMajor && rsi2 > 75.0 && close2 > bbUp2 && rsi1 < 75.0 && close < bbUp1)
-   {
-      double conf = 72.0;
-      string reasons = "BB+RSI overbought (RSI>75)";
-
-      if(bearM15)               { conf += 8.0;  reasons += " | EMA M15 baissier"; }
-      if(macd1 < 0)             { conf += 5.0;  reasons += " | MACD<0"; }
-      if(macd1 < macd2)         { conf += 3.0;  reasons += " | MACD baisse"; }
-      if(IsStrongBearishCandle()){ conf += 5.0; reasons += " | bougie forte"; }
-      if(rsi2 > 80.0)           { conf += 2.0;  reasons += " | RSI extreme"; }
-
-      signal.action     = SIGNAL_SELL;
-      signal.entry      = bid;
-      signal.sl         = bbUp1 + slDistance;
-      signal.tp1        = bid - MathAbs(signal.sl - bid) * tpRatio;
-      signal.confidence = MathMin(conf, 95.0);
-      signal.reason     = reasons;
-      return signal;
-   }
-
-   // -------------------------------------------------------
-   // SETUP 3 : Cassure haussiere de range
-   // Conditions obligatoires :
-   //   - Close > High des 20 dernieres bougies
-   //   - Bougie forte haussiere
-   //   - EMA M15 haussier ET MACD > 0 (MACD devient obligatoire)
-   //   - Prix au-dessus du BB Middle (pression haussiere confirmee)
-   //   - H1 EMA200 en zone haussiere
-   // -------------------------------------------------------
-   double recentHigh = GetRecentHigh(20);
-   double recentLow  = GetRecentLow(20);
-
-   if(bullMajor && bullM15 && macd1 > 0 &&
-      close > recentHigh && close > bbMid1 &&
-      IsStrongBullishCandle())
-   {
-      double conf = 68.0;
-      string reasons = "Cassure haussiere M5";
-
-      if(macd1 > macd2)                 { conf += 7.0;  reasons += " | MACD hausse"; }
-      if(rsi1 > 50.0 && rsi1 < 70.0)   { conf += 5.0;  reasons += " | RSI haussier"; }
-      if(close > bbMid1 * 1.001)        { conf += 3.0;  reasons += " | BB Middle franchi"; }
-
-      signal.action     = SIGNAL_BUY;
-      signal.entry      = ask;
-      signal.sl         = recentHigh - slDistance;
-      signal.tp1        = ask + MathAbs(ask - signal.sl) * tpRatio;
-      signal.confidence = MathMin(conf, 95.0);
-      signal.reason     = reasons;
-      return signal;
-   }
-
-   // -------------------------------------------------------
-   // SETUP 4 : Cassure baissiere de range
-   // Conditions obligatoires :
-   //   - Close < Low des 20 dernieres bougies
-   //   - Bougie forte baissiere
-   //   - EMA M15 baissier ET MACD < 0 (MACD devient obligatoire)
-   //   - Prix en-dessous du BB Middle
-   //   - H1 EMA200 en zone baissiere
-   // -------------------------------------------------------
-   if(bearMajor && bearM15 && macd1 < 0 &&
-      close < recentLow && close < bbMid1 &&
-      IsStrongBearishCandle())
-   {
-      double conf = 68.0;
-      string reasons = "Cassure baissiere M5";
-
-      if(macd1 < macd2)                 { conf += 7.0;  reasons += " | MACD baisse"; }
-      if(rsi1 < 50.0 && rsi1 > 30.0)   { conf += 5.0;  reasons += " | RSI baissier"; }
-      if(close < bbMid1 * 0.999)        { conf += 3.0;  reasons += " | BB Middle franchi"; }
-
-      signal.action     = SIGNAL_SELL;
-      signal.entry      = bid;
-      signal.sl         = recentLow + slDistance;
-      signal.tp1        = bid - MathAbs(signal.sl - bid) * tpRatio;
-      signal.confidence = MathMin(conf, 95.0);
-      signal.reason     = reasons;
-      return signal;
+      return BuildSellSignal(
+         bid,
+         structuralSL,
+         atr,
+         useAtrStopCap,
+         atrStopMultiplier,
+         maxStopDistancePoints,
+         "Cassure baissiere M5 confirmee avec RSI et stop dynamique"
+      );
    }
 
    return signal;
 }
 
+enum PullbackEntryState
+{
+   PULLBACK_IDLE,
+   PULLBACK_ARMED_BUY,
+   PULLBACK_ARMED_SELL,
+   PULLBACK_WINDOW_BUY,
+   PULLBACK_WINDOW_SELL
+};
+
+PullbackEntryState g_pullbackState = PULLBACK_IDLE;
+datetime g_pullbackLastClosedCandle = 0;
+double g_pullbackBreakoutLevel = 0.0;
+int g_pullbackCounter = 0;
+int g_pullbackWindowCounter = 0;
+int g_pullbackBarsSinceArmed = 0;
+
+bool g_h4ZoneWaitingRetest = false;
+int g_h4ZoneBreakoutDir = 0;
+datetime g_h4ZoneDayStart = 0;
+datetime g_h4ZoneBreakoutTime = 0;
+datetime g_h4ZoneLastClosedCandle = 0;
+double g_h4ZoneHigh = 0.0;
+double g_h4ZoneLow = 0.0;
+int g_h4ZoneWaitBars = 0;
+
+void ResetPullbackEntry()
+{
+   g_pullbackState = PULLBACK_IDLE;
+   g_pullbackBreakoutLevel = 0.0;
+   g_pullbackCounter = 0;
+   g_pullbackWindowCounter = 0;
+   g_pullbackBarsSinceArmed = 0;
+}
+
+string PullbackStateLabel()
+{
+   if(g_pullbackState == PULLBACK_ARMED_BUY)
+      return "pullback BUY arme";
+
+   if(g_pullbackState == PULLBACK_ARMED_SELL)
+      return "pullback SELL arme";
+
+   if(g_pullbackState == PULLBACK_WINDOW_BUY)
+      return "fenetre BUY ouverte";
+
+   if(g_pullbackState == PULLBACK_WINDOW_SELL)
+      return "fenetre SELL ouverte";
+
+   return "pullback idle";
+}
+
+void ResetH4ZoneRetest()
+{
+   g_h4ZoneWaitingRetest = false;
+   g_h4ZoneBreakoutDir = 0;
+   g_h4ZoneBreakoutTime = 0;
+   g_h4ZoneWaitBars = 0;
+}
+
+bool BuildH4Zone(bool usePreviousDayRange, int firstH4Bars)
+{
+   datetime currentDayStart = iTime(_Symbol, PERIOD_D1, 0);
+
+   if(currentDayStart <= 0)
+      return false;
+
+   if(currentDayStart == g_h4ZoneDayStart && g_h4ZoneHigh > 0 && g_h4ZoneLow > 0)
+      return true;
+
+   g_h4ZoneHigh = 0.0;
+   g_h4ZoneLow = 0.0;
+   g_h4ZoneDayStart = currentDayStart;
+   ResetH4ZoneRetest();
+
+   if(usePreviousDayRange)
+   {
+      g_h4ZoneHigh = iHigh(_Symbol, PERIOD_D1, 1);
+      g_h4ZoneLow = iLow(_Symbol, PERIOD_D1, 1);
+      return g_h4ZoneHigh > 0 && g_h4ZoneLow > 0 && g_h4ZoneHigh > g_h4ZoneLow;
+   }
+
+   int barsToRead = firstH4Bars < 1 ? 1 : firstH4Bars;
+   datetime readyTime = currentDayStart + (barsToRead * 4 * 60 * 60);
+
+   if(TimeCurrent() < readyTime)
+      return false;
+
+   int startShift = iBarShift(_Symbol, PERIOD_H4, currentDayStart, false);
+
+   if(startShift < 0)
+      return false;
+
+   double high = -DBL_MAX;
+   double low = DBL_MAX;
+
+   for(int index = 0; index < barsToRead; index++)
+   {
+      int shift = startShift - index;
+
+      if(shift < 1)
+         break;
+
+      double candleHigh = iHigh(_Symbol, PERIOD_H4, shift);
+      double candleLow = iLow(_Symbol, PERIOD_H4, shift);
+
+      if(candleHigh <= 0 || candleLow <= 0)
+         continue;
+
+      high = MathMax(high, candleHigh);
+      low = MathMin(low, candleLow);
+   }
+
+   if(high <= 0 || low <= 0 || high <= low)
+      return false;
+
+   g_h4ZoneHigh = high;
+   g_h4ZoneLow = low;
+   return true;
+}
+
+bool CandleBodyPercentOK(double open, double close, double high, double low, double minimumBodyPct)
+{
+   double range = high - low;
+
+   if(range <= 0)
+      return false;
+
+   double bodyPct = MathAbs(close - open) / range * 100.0;
+   return bodyPct >= minimumBodyPct;
+}
+
+SignalResult AnalyzeH4ZoneRetestMarket(
+   bool usePreviousDayRange,
+   int firstH4Bars,
+   int retestWindowBars,
+   double retestTolerancePoints,
+   double breakoutMinPoints,
+   double breakoutBodyPct,
+   bool requireM15Trend,
+   double slBufferPoints,
+   double buyRsiMin,
+   double buyRsiMax,
+   double sellRsiMin,
+   double sellRsiMax,
+   bool allowBuySignals,
+   bool allowSellSignals,
+   bool useAtrStopCap,
+   int atrStopPeriod,
+   double atrStopMultiplier,
+   double maxStopDistancePoints
+)
+{
+   datetime closedCandleTime = iTime(_Symbol, PERIOD_M5, 1);
+
+   if(closedCandleTime <= 0 || closedCandleTime == g_h4ZoneLastClosedCandle)
+      return EmptySignal(g_h4ZoneWaitingRetest ? "H4 zone retest en attente" : "H4 zone idle");
+
+   g_h4ZoneLastClosedCandle = closedCandleTime;
+
+   if(!BuildH4Zone(usePreviousDayRange, firstH4Bars))
+      return EmptySignal("H4 zone indisponible");
+
+   double open = iOpen(_Symbol, PERIOD_M5, 1);
+   double close = iClose(_Symbol, PERIOD_M5, 1);
+   double high = iHigh(_Symbol, PERIOD_M5, 1);
+   double low = iLow(_Symbol, PERIOD_M5, 1);
+   double previousClose = iClose(_Symbol, PERIOD_M5, 2);
+   double tolerance = MathMax(0.0, retestTolerancePoints) * _Point;
+   double breakoutDistance = MathMax(0.0, breakoutMinPoints) * _Point;
+   int maxWaitBars = retestWindowBars < 1 ? 1 : retestWindowBars;
+   double atr = useAtrStopCap ? GetATRValue(PERIOD_M5, atrStopPeriod, 1) : 0.0;
+   double rsi = GetRSIValue(PERIOD_M5, 14, 1);
+   double h4BuyRsiMin = MathMax(buyRsiMin, 55.0);
+   double h4BuyRsiMax = MathMin(buyRsiMax, 68.0);
+   double h4SellRsiMin = MathMax(sellRsiMin, 28.0);
+   double h4SellRsiMax = MathMin(sellRsiMax, 45.0);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   if(!g_h4ZoneWaitingRetest)
+   {
+      bool bodyOK = CandleBodyPercentOK(open, close, high, low, breakoutBodyPct);
+      bool bullishBreakout =
+         allowBuySignals &&
+         previousClose <= g_h4ZoneHigh &&
+         close > g_h4ZoneHigh + breakoutDistance &&
+         close > open &&
+         bodyOK &&
+         (!requireM15Trend || IsM15BullishTrend());
+      bool bearishBreakout =
+         allowSellSignals &&
+         previousClose >= g_h4ZoneLow &&
+         close < g_h4ZoneLow - breakoutDistance &&
+         close < open &&
+         bodyOK &&
+         (!requireM15Trend || IsM15BearishTrend());
+
+      if(bullishBreakout)
+      {
+         g_h4ZoneWaitingRetest = true;
+         g_h4ZoneBreakoutDir = 1;
+         g_h4ZoneBreakoutTime = closedCandleTime;
+         g_h4ZoneWaitBars = 0;
+         return EmptySignal("H4 zone breakout BUY detecte, attente retest");
+      }
+
+      if(bearishBreakout)
+      {
+         g_h4ZoneWaitingRetest = true;
+         g_h4ZoneBreakoutDir = -1;
+         g_h4ZoneBreakoutTime = closedCandleTime;
+         g_h4ZoneWaitBars = 0;
+         return EmptySignal("H4 zone breakout SELL detecte, attente retest");
+      }
+
+      return EmptySignal("H4 zone sans breakout");
+   }
+
+   g_h4ZoneWaitBars++;
+
+   if(g_h4ZoneWaitBars > maxWaitBars)
+   {
+      ResetH4ZoneRetest();
+      return EmptySignal("H4 zone retest expire");
+   }
+
+   if(g_h4ZoneBreakoutDir == 1)
+   {
+      bool retest =
+         low <= g_h4ZoneHigh + tolerance &&
+         close > g_h4ZoneHigh &&
+         close > open &&
+         rsi >= h4BuyRsiMin &&
+         rsi <= h4BuyRsiMax &&
+         (!requireM15Trend || IsM15BullishTrend());
+
+      if(retest)
+      {
+         double structuralSL = MathMin(low, g_h4ZoneHigh) - (MathMax(_Point, slBufferPoints * _Point));
+         ResetH4ZoneRetest();
+         return BuildBuySignal(
+            ask,
+            structuralSL,
+            atr,
+            useAtrStopCap,
+            atrStopMultiplier,
+            maxStopDistancePoints,
+            "H4/D1 zone breakout + retest BUY"
+         );
+      }
+   }
+
+   if(g_h4ZoneBreakoutDir == -1)
+   {
+      bool retest =
+         high >= g_h4ZoneLow - tolerance &&
+         close < g_h4ZoneLow &&
+         close < open &&
+         rsi >= h4SellRsiMin &&
+         rsi <= h4SellRsiMax &&
+         (!requireM15Trend || IsM15BearishTrend());
+
+      if(retest)
+      {
+         double structuralSL = MathMax(high, g_h4ZoneLow) + (MathMax(_Point, slBufferPoints * _Point));
+         ResetH4ZoneRetest();
+         return BuildSellSignal(
+            bid,
+            structuralSL,
+            atr,
+            useAtrStopCap,
+            atrStopMultiplier,
+            maxStopDistancePoints,
+            "H4/D1 zone breakout + retest SELL"
+         );
+      }
+   }
+
+   return EmptySignal("H4 zone retest en attente");
+}
+
+SignalResult AnalyzePullbackMarket(
+   int breakoutLookback,
+   double stopBuffer,
+   double breakoutConfirmPoints,
+   double buyRsiMin,
+   double buyRsiMax,
+   double sellRsiMin,
+   double sellRsiMax,
+   bool allowBuySignals,
+   bool allowSellSignals,
+   bool useAtrStopCap,
+   int atrStopPeriod,
+   double atrStopMultiplier,
+   double maxStopDistancePoints,
+   int pullbackCandles,
+   int pullbackWindowBars,
+   double pullbackBreakoutConfirmPoints
+)
+{
+   datetime closedCandleTime = iTime(_Symbol, PERIOD_M5, 1);
+
+   if(closedCandleTime <= 0 || closedCandleTime == g_pullbackLastClosedCandle)
+      return EmptySignal(PullbackStateLabel());
+
+   g_pullbackLastClosedCandle = closedCandleTime;
+
+   int requiredPullbacks = pullbackCandles < 1 ? 1 : pullbackCandles;
+   int windowBars = pullbackWindowBars < 1 ? 1 : pullbackWindowBars;
+   double pullbackConfirmDistance = MathMax(0.0, pullbackBreakoutConfirmPoints) * _Point;
+   double buffer = MathMax(_Point, stopBuffer);
+   double atr = useAtrStopCap ? GetATRValue(PERIOD_M5, atrStopPeriod, 1) : 0.0;
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double close = iClose(_Symbol, PERIOD_M5, 1);
+
+   SignalResult freshSetup = AnalyzeImmediateMarket(
+      breakoutLookback,
+      stopBuffer,
+      breakoutConfirmPoints,
+      buyRsiMin,
+      buyRsiMax,
+      sellRsiMin,
+      sellRsiMax,
+      allowBuySignals,
+      allowSellSignals,
+      useAtrStopCap,
+      atrStopPeriod,
+      atrStopMultiplier,
+      maxStopDistancePoints
+   );
+
+   if(g_pullbackState == PULLBACK_IDLE && freshSetup.action != SIGNAL_WAIT)
+   {
+      if(freshSetup.action == SIGNAL_BUY)
+      {
+         g_pullbackState = PULLBACK_ARMED_BUY;
+         g_pullbackBreakoutLevel = iHigh(_Symbol, PERIOD_M5, 1);
+      }
+      else if(freshSetup.action == SIGNAL_SELL)
+      {
+         g_pullbackState = PULLBACK_ARMED_SELL;
+         g_pullbackBreakoutLevel = iLow(_Symbol, PERIOD_M5, 1);
+      }
+
+      g_pullbackCounter = 0;
+      g_pullbackWindowCounter = 0;
+      g_pullbackBarsSinceArmed = 0;
+
+      return EmptySignal("Setup detecte, attente pullback");
+   }
+
+   if(g_pullbackState == PULLBACK_ARMED_BUY || g_pullbackState == PULLBACK_ARMED_SELL)
+   {
+      g_pullbackBarsSinceArmed++;
+
+      if(g_pullbackBarsSinceArmed > requiredPullbacks + windowBars + 5)
+      {
+         ResetPullbackEntry();
+         return EmptySignal("Pullback expire");
+      }
+
+      if(g_pullbackState == PULLBACK_ARMED_BUY)
+      {
+         if(IsBearishClose())
+            g_pullbackCounter++;
+
+         if(freshSetup.action == SIGNAL_SELL)
+         {
+            ResetPullbackEntry();
+            return EmptySignal("Pullback invalide par signal oppose");
+         }
+
+         if(g_pullbackCounter >= requiredPullbacks)
+         {
+            g_pullbackState = PULLBACK_WINDOW_BUY;
+            g_pullbackWindowCounter = 0;
+            return EmptySignal("Pullback BUY confirme, fenetre ouverte");
+         }
+      }
+
+      if(g_pullbackState == PULLBACK_ARMED_SELL)
+      {
+         if(IsBullishClose())
+            g_pullbackCounter++;
+
+         if(freshSetup.action == SIGNAL_BUY)
+         {
+            ResetPullbackEntry();
+            return EmptySignal("Pullback invalide par signal oppose");
+         }
+
+         if(g_pullbackCounter >= requiredPullbacks)
+         {
+            g_pullbackState = PULLBACK_WINDOW_SELL;
+            g_pullbackWindowCounter = 0;
+            return EmptySignal("Pullback SELL confirme, fenetre ouverte");
+         }
+      }
+   }
+
+   if(g_pullbackState == PULLBACK_WINDOW_BUY)
+   {
+      g_pullbackWindowCounter++;
+
+      if(g_pullbackWindowCounter > windowBars)
+      {
+         ResetPullbackEntry();
+         return EmptySignal("Fenetre pullback BUY expiree");
+      }
+
+      if(close > g_pullbackBreakoutLevel + pullbackConfirmDistance && IsBullishClose() && IsM15BullishTrend())
+      {
+         double structuralSL = GetRecentLow(requiredPullbacks + 2, 1) - buffer;
+         ResetPullbackEntry();
+
+         return BuildBuySignal(
+            ask,
+            structuralSL,
+            atr,
+            useAtrStopCap,
+            atrStopMultiplier,
+            maxStopDistancePoints,
+            "Entree BUY apres breakout, pullback et reprise"
+         );
+      }
+   }
+
+   if(g_pullbackState == PULLBACK_WINDOW_SELL)
+   {
+      g_pullbackWindowCounter++;
+
+      if(g_pullbackWindowCounter > windowBars)
+      {
+         ResetPullbackEntry();
+         return EmptySignal("Fenetre pullback SELL expiree");
+      }
+
+      if(close < g_pullbackBreakoutLevel - pullbackConfirmDistance && IsBearishClose() && IsM15BearishTrend())
+      {
+         double structuralSL = GetRecentHigh(requiredPullbacks + 2, 1) + buffer;
+         ResetPullbackEntry();
+
+         return BuildSellSignal(
+            bid,
+            structuralSL,
+            atr,
+            useAtrStopCap,
+            atrStopMultiplier,
+            maxStopDistancePoints,
+            "Entree SELL apres breakout, pullback et reprise"
+         );
+      }
+   }
+
+   return EmptySignal(PullbackStateLabel());
+}
+
+SignalResult AnalyzeMarket(
+   int breakoutLookback,
+   double stopBuffer,
+   double breakoutConfirmPoints,
+   double buyRsiMin,
+   double buyRsiMax,
+   double sellRsiMin,
+   double sellRsiMax,
+   bool allowBuySignals,
+   bool allowSellSignals,
+   bool useAtrStopCap,
+   int atrStopPeriod,
+   double atrStopMultiplier,
+   double maxStopDistancePoints,
+   bool usePullbackEntry,
+   int pullbackCandles,
+   int pullbackWindowBars,
+   double pullbackBreakoutConfirmPoints,
+   bool useH4ZoneRetest,
+   bool h4UsePreviousDayRange,
+   int h4ZoneFirstBars,
+   int h4RetestWindowBars,
+   double h4RetestTolerancePoints,
+   double h4BreakoutMinPoints,
+   double h4BreakoutBodyPct,
+   bool h4RequireM15Trend,
+   double h4SLBufferPoints
+)
+{
+   if(useH4ZoneRetest)
+   {
+      return AnalyzeH4ZoneRetestMarket(
+         h4UsePreviousDayRange,
+         h4ZoneFirstBars,
+         h4RetestWindowBars,
+         h4RetestTolerancePoints,
+         h4BreakoutMinPoints,
+         h4BreakoutBodyPct,
+         h4RequireM15Trend,
+         h4SLBufferPoints,
+         buyRsiMin,
+         buyRsiMax,
+         sellRsiMin,
+         sellRsiMax,
+         allowBuySignals,
+         allowSellSignals,
+         useAtrStopCap,
+         atrStopPeriod,
+         atrStopMultiplier,
+         maxStopDistancePoints
+      );
+   }
+
+   if(usePullbackEntry)
+   {
+      return AnalyzePullbackMarket(
+         breakoutLookback,
+         stopBuffer,
+         breakoutConfirmPoints,
+         buyRsiMin,
+         buyRsiMax,
+         sellRsiMin,
+         sellRsiMax,
+         allowBuySignals,
+         allowSellSignals,
+         useAtrStopCap,
+         atrStopPeriod,
+         atrStopMultiplier,
+         maxStopDistancePoints,
+         pullbackCandles,
+         pullbackWindowBars,
+         pullbackBreakoutConfirmPoints
+      );
+   }
+
+   return AnalyzeImmediateMarket(
+      breakoutLookback,
+      stopBuffer,
+      breakoutConfirmPoints,
+      buyRsiMin,
+      buyRsiMax,
+      sellRsiMin,
+      sellRsiMax,
+      allowBuySignals,
+      allowSellSignals,
+      useAtrStopCap,
+      atrStopPeriod,
+      atrStopMultiplier,
+      maxStopDistancePoints
+   );
+}
+
 string SignalActionToString(SignalAction action)
 {
-   if(action == SIGNAL_BUY)        return "BUY";
-   if(action == SIGNAL_SELL)       return "SELL";
-   if(action == SIGNAL_BUY_LIMIT)  return "BUY LIMIT";
-   if(action == SIGNAL_SELL_LIMIT) return "SELL LIMIT";
+   if(action == SIGNAL_BUY)
+      return "BUY";
+
+   if(action == SIGNAL_SELL)
+      return "SELL";
+
+   if(action == SIGNAL_BUY_LIMIT)
+      return "BUY LIMIT";
+
+   if(action == SIGNAL_SELL_LIMIT)
+      return "SELL LIMIT";
+
    return "WAIT";
 }
 
