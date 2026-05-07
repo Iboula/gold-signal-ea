@@ -1,6 +1,7 @@
-#property version   "1.02"
+#property version   "1.03"
 #include "GoldSignalEngine.mqh"
 #include "DeepGoldScalpingStrategy.mqh"
+#include "AiValidationClient.mqh"
 
 #define DEEP_SIGNAL_FILE "DeepGoldSignalEA_Signals.csv"
 
@@ -27,6 +28,12 @@ input double MinAtrPoints = 120;
 input double MaxAtrPoints = 900;
 input double MinConfidence = 80;
 input int AlertCooldownMinutes = 10;
+
+input bool UseAiValidation = true;
+input string AiApiUrl = "http://localhost:5000/api/signals/analyze";
+input int AiTimeoutMs = 8000;
+input double MinAiScore = 80;
+input bool SendTelegramOnlyIfAiApproved = true;
 
 input bool UseTelegram = false;
 input string TelegramBotToken = "";
@@ -231,7 +238,7 @@ void LogSignal(const SignalResult &signal, double score, double spread, double a
    lastSignalKey = key;
 }
 
-string BuildSignalMessage(const SignalResult &signal, double score, double spread, double atrPoints)
+string BuildSignalMessage(const SignalResult &signal, double score, double spread, double atrPoints, string aiComment)
 {
    string msg = "Deep Gold Scalp " + SignalActionToString(signal.action) + "\n";
    msg += "Symbol: " + _Symbol + "\n";
@@ -241,6 +248,8 @@ string BuildSignalMessage(const SignalResult &signal, double score, double sprea
    msg += "Score: " + DoubleToString(score, 1) + "%\n";
    msg += "Spread: " + DoubleToString(spread, 1) + " pts\n";
    msg += "ATR M5: " + DoubleToString(atrPoints, 1) + " pts\n";
+   if(aiComment != "")
+      msg += "AI: " + aiComment + "\n";
    msg += "Reason: " + signal.reason;
    return msg;
 }
@@ -262,32 +271,69 @@ void OnTick()
 
    double spread = SpreadPoints();
    double atrPoints = GetATRValue(PERIOD_M5, AtrStopPeriod, 1) / _Point;
-   double score = ScoreSignal(signal, spread, atrPoints);
-   string block = BlockReason(spread, atrPoints, score);
+   double algoScore = ScoreSignal(signal, spread, atrPoints);
+   string block = BlockReason(spread, atrPoints, algoScore);
 
-   LogSignal(signal, score, spread, atrPoints, block);
+   double finalScore = algoScore;
+   bool aiApproved = !UseAiValidation;
+   string aiComment = "AI disabled";
 
-   string text="Deep Gold Scalping EA v1.02\n";
+   bool shouldAskAi = signal.action != SIGNAL_WAIT && block == "OK" && UseAiValidation;
+
+   if(shouldAskAi)
+   {
+      string sessionLabel = IsSessionOk() ? "OK" : "OUT";
+      string json = BuildAiSignalJson(
+         SignalActionToString(signal.action),
+         signal.entry,
+         signal.sl,
+         signal.tp1,
+         algoScore,
+         spread,
+         atrPoints,
+         sessionLabel,
+         signal.reason,
+         _Digits
+      );
+
+      AiValidationResult ai = ValidateSignalWithAiApi(AiApiUrl, json, AiTimeoutMs);
+      aiApproved = ai.success && ai.approved && ai.score >= MinAiScore;
+      aiComment = ai.comment;
+
+      if(ai.success && ai.score > 0)
+         finalScore = ai.score;
+   }
+
+   if(UseAiValidation && signal.action != SIGNAL_WAIT && block == "OK" && !aiApproved)
+      block = "AI refuse";
+
+   LogSignal(signal, finalScore, spread, atrPoints, block);
+
+   string text="Deep Gold Scalping EA v1.03\n";
    text+="Mode: SIGNAL ONLY\n";
    text+="Action: "+SignalActionToString(signal.action)+"\n";
    text+="Entry: "+DoubleToString(signal.entry,_Digits)+"\n";
    text+="SL: "+DoubleToString(signal.sl,_Digits)+"\n";
    text+="TP1: "+DoubleToString(signal.tp1,_Digits)+"\n";
-   text+="Confidence: "+DoubleToString(score,1)+"\n";
+   text+="Algo Score: "+DoubleToString(algoScore,1)+"\n";
+   text+="Final Score: "+DoubleToString(finalScore,1)+"\n";
+   text+="AI: "+(UseAiValidation ? (aiApproved ? "APPROVED" : "NOT APPROVED") : "OFF")+"\n";
    text+="Spread: "+DoubleToString(spread,1)+"\n";
    text+="ATR M5: "+DoubleToString(atrPoints,1)+" pts\n";
    text+="Session OK: "+(IsSessionOk()?"YES":"NO")+"\n";
    text+="NoTrade: "+(IsNoTradeTime()?"YES":"NO")+"\n";
    text+="Telegram: "+(UseTelegram?"ON":"OFF")+"\n";
    text+="Block: "+block+"\n";
+   text+="AI Comment: "+aiComment+"\n";
    text+="Reason: "+signal.reason+"\n";
    Comment(text);
 
-   bool canAlert = signal.action != SIGNAL_WAIT && block == "OK" && (TimeCurrent() - lastAlertTime) >= AlertCooldownMinutes * 60;
+   bool telegramAllowed = !SendTelegramOnlyIfAiApproved || !UseAiValidation || aiApproved;
+   bool canAlert = signal.action != SIGNAL_WAIT && block == "OK" && telegramAllowed && (TimeCurrent() - lastAlertTime) >= AlertCooldownMinutes * 60;
 
    if(canAlert)
    {
-      string msg = BuildSignalMessage(signal, score, spread, atrPoints);
+      string msg = BuildSignalMessage(signal, finalScore, spread, atrPoints, aiComment);
       Alert(msg);
       SendTelegram(msg);
       lastAlertTime = TimeCurrent();
