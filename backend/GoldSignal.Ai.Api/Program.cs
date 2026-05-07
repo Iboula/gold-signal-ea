@@ -1,3 +1,5 @@
+using GoldSignal.Ai.Api.Data;
+using Microsoft.EntityFrameworkCore;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
@@ -6,6 +8,14 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
+
+var connectionString = builder.Configuration.GetConnectionString("TradingDb");
+
+if (!string.IsNullOrWhiteSpace(connectionString))
+{
+    builder.Services.AddDbContext<TradingDbContext>(options =>
+        options.UseNpgsql(connectionString));
+}
 
 var app = builder.Build();
 
@@ -18,11 +28,24 @@ app.MapGet("/health", () => Results.Ok(new
     service = "GoldSignal.Ai.Api"
 }));
 
+app.MapGet("/api/signals/recent", async (TradingDbContext db, int take = 50) =>
+{
+    take = Math.Clamp(take, 1, 200);
+
+    var signals = await db.TradingSignals
+        .OrderByDescending(x => x.CreatedAtUtc)
+        .Take(take)
+        .ToListAsync();
+
+    return Results.Ok(signals);
+});
+
 app.MapPost("/api/signals/analyze", async (
     SignalRequest request,
     IHttpClientFactory httpClientFactory,
     IConfiguration configuration,
-    ILoggerFactory loggerFactory) =>
+    ILoggerFactory loggerFactory,
+    IServiceProvider serviceProvider) =>
 {
     var logger = loggerFactory.CreateLogger("SignalAnalyzer");
     var apiKey = configuration["OPENAI_API_KEY"];
@@ -62,17 +85,20 @@ app.MapPost("/api/signals/analyze", async (
     var response = await client.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", payload);
     var content = await response.Content.ReadAsStringAsync();
 
+    SignalValidationResponse validation;
+
     if (!response.IsSuccessStatusCode)
     {
         logger.LogWarning("OpenAI call failed: {StatusCode} {Content}", response.StatusCode, content);
-        return Results.Ok(new SignalValidationResponse(
-            Approved: false,
-            Score: 0,
-            Comment: "AI validation unavailable"));
+        validation = new SignalValidationResponse(false, 0, "AI validation unavailable");
+    }
+    else
+    {
+        var assistantText = ExtractAssistantContent(content);
+        validation = ParseValidation(assistantText);
     }
 
-    var assistantText = ExtractAssistantContent(content);
-    var validation = ParseValidation(assistantText);
+    await PersistSignalIfConfiguredAsync(serviceProvider, request, validation, logger);
 
     logger.LogInformation(
         "Signal {Action} {Symbol} approved={Approved} score={Score}",
@@ -85,6 +111,41 @@ app.MapPost("/api/signals/analyze", async (
 });
 
 app.Run();
+
+static async Task PersistSignalIfConfiguredAsync(
+    IServiceProvider serviceProvider,
+    SignalRequest request,
+    SignalValidationResponse validation,
+    ILogger logger)
+{
+    var db = serviceProvider.GetService<TradingDbContext>();
+
+    if (db is null)
+    {
+        logger.LogInformation("TradingDb connection not configured. Signal persistence skipped.");
+        return;
+    }
+
+    db.TradingSignals.Add(new TradingSignal
+    {
+        Symbol = request.Symbol,
+        Action = request.Action,
+        Entry = request.Entry,
+        StopLoss = request.StopLoss,
+        TakeProfit = request.TakeProfit,
+        AlgoScore = request.Confidence,
+        AiScore = validation.Score,
+        Approved = validation.Approved,
+        Spread = request.Spread,
+        Atr = request.Atr,
+        Session = request.Session,
+        Reason = request.Reason,
+        AiComment = validation.Comment,
+        Source = "MT5"
+    });
+
+    await db.SaveChangesAsync();
+}
 
 static string BuildPrompt(SignalRequest request) => $$"""
 Validate this XAUUSD scalp signal.
@@ -119,7 +180,6 @@ Return JSON only with this shape:
 static string ExtractAssistantContent(string openAiJson)
 {
     using var document = JsonDocument.Parse(openAiJson);
-
     var root = document.RootElement;
 
     if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
