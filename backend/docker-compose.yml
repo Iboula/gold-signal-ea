@@ -11,5 +11,19 @@ services:
     volumes:
       - goldsignal-postgres-data:/var/lib/postgresql/data
 
+  ai-api:
+    build:
+      context: ./GoldSignal.Ai.Api
+      dockerfile: Dockerfile
+    container_name: goldsignal-ai-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ConnectionStrings__TradingDb: Host=postgres;Port=5432;Database=goldsignal;Username=postgres;Password=postgres
+    ports:
+      - "5000:8080"
+    depends_on:
+      - postgres
+
 volumes:
   goldsignal-postgres-data:
