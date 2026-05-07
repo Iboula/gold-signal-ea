@@ -4,13 +4,13 @@
 <PageTitle>GoldSignal — Dashboard</PageTitle>
 
 <div class="page-header">
-    <h1>Recent Signals</h1>
-    <button class="btn-refresh" @onclick="LoadSignalsAsync">&#8635; Refresh</button>
+    <h1>GoldSignal Dashboard</h1>
+    <button class="btn-refresh" @onclick="LoadSignalsAsync">↻ Refresh</button>
 </div>
 
 @if (loading)
 {
-    <div class="loading-indicator">Loading signals&hellip;</div>
+    <div class="loading-indicator">Loading signals...</div>
 }
 else if (errorMessage is not null)
 {
@@ -20,21 +20,32 @@ else if (errorMessage is not null)
 }
 else if (signals is not null && signals.Count > 0)
 {
+    <div class="stats-grid">
+        <div class="stat-card"><span>Total</span><strong>@signals.Count</strong></div>
+        <div class="stat-card"><span>Approved</span><strong>@ApprovedCount</strong></div>
+        <div class="stat-card"><span>Rejected</span><strong>@RejectedCount</strong></div>
+        <div class="stat-card"><span>Approval Rate</span><strong>@ApprovalRate.ToString("F1")%</strong></div>
+        <div class="stat-card"><span>Avg AI Score</span><strong>@AverageAiScore.ToString("F1")</strong></div>
+    </div>
+
     <div class="table-wrapper">
         <table class="signal-table">
             <thead>
                 <tr>
-                    <th>Time (UTC)</th>
+                    <th>Time UTC</th>
                     <th>Symbol</th>
                     <th>Action</th>
                     <th>Entry</th>
                     <th>SL</th>
                     <th>TP</th>
                     <th>Algo</th>
-                    <th>AI Score</th>
+                    <th>AI</th>
                     <th>Approved</th>
+                    <th>Spread</th>
+                    <th>ATR</th>
                     <th>Session</th>
-                    <th>Source</th>
+                    <th>AI Comment</th>
+                    <th>Reason</th>
                 </tr>
             </thead>
             <tbody>
@@ -50,18 +61,22 @@ else if (signals is not null && signals.Count > 0)
                         <td>@s.AlgoScore.ToString("F0")</td>
                         <td>@s.AiScore.ToString("F0")</td>
                         <td class="approved-cell">@(s.Approved ? "✓" : "✗")</td>
+                        <td>@s.Spread.ToString("F1")</td>
+                        <td>@s.Atr.ToString("F1")</td>
                         <td>@s.Session</td>
-                        <td>@s.Source</td>
+                        <td class="text-cell">@s.AiComment</td>
+                        <td class="text-cell">@s.Reason</td>
                     </tr>
                 }
             </tbody>
         </table>
     </div>
+
     <p class="signal-count">Showing @signals.Count signal(s).</p>
 }
 else
 {
-    <p class="empty-state">No signals recorded yet. Signals appear here after MT5 sends an analysis request.</p>
+    <p class="empty-state">No signals recorded yet.</p>
 }
 
 @code {
@@ -69,18 +84,25 @@ else
     private bool loading = true;
     private string? errorMessage;
 
-    protected override async Task OnInitializedAsync() => await LoadSignalsAsync();
+    private int ApprovedCount => signals?.Count(x => x.Approved) ?? 0;
+    private int RejectedCount => (signals?.Count ?? 0) - ApprovedCount;
+    private double ApprovalRate => signals is { Count: > 0 } ? ApprovedCount * 100.0 / signals.Count : 0.0;
+    private double AverageAiScore => signals is { Count: > 0 } ? signals.Average(x => x.AiScore) : 0.0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSignalsAsync();
+    }
 
     private async Task LoadSignalsAsync()
     {
         loading = true;
         errorMessage = null;
-        StateHasChanged();
 
         try
         {
             var client = HttpClientFactory.CreateClient("api");
-            signals = await client.GetFromJsonAsync<List<SignalDto>>("/api/signals/recent");
+            signals = await client.GetFromJsonAsync<List<SignalDto>>("/api/signals/recent?take=100");
         }
         catch (Exception ex)
         {
