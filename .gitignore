@@ -1,3 +1,9 @@
 telegram.conf
 Config/telegram.conf
 backend/.env
+
+# .NET build output
+bin/
+obj/
+*.user
+.vs/

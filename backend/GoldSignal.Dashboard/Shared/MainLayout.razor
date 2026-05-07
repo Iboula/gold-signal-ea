@@ -1,0 +1,22 @@
+@inherits LayoutComponentBase
+
+<div class="layout-shell">
+    <nav class="sidebar">
+        <div class="sidebar-brand">
+            <span class="brand-icon">&#9651;</span>
+            <span class="brand-text">GoldSignal</span>
+        </div>
+        <ul class="nav-links">
+            <li>
+                <NavLink href="" Match="NavLinkMatch.All" class="nav-link">
+                    Dashboard
+                </NavLink>
+            </li>
+        </ul>
+    </nav>
+    <main class="main-content">
+        <div class="content-wrapper">
+            @Body
+        </div>
+    </main>
+</div>

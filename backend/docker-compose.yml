@@ -25,5 +25,18 @@ services:
     depends_on:
       - postgres
 
+  dashboard:
+    build:
+      context: ./GoldSignal.Dashboard
+      dockerfile: Dockerfile
+    container_name: goldsignal-dashboard
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ApiBaseUrl: http://ai-api:8080
+    ports:
+      - "5001:8080"
+    depends_on:
+      - ai-api
+
 volumes:
   goldsignal-postgres-data:

@@ -1,0 +1,94 @@
+@page "/"
+@inject IHttpClientFactory HttpClientFactory
+
+<PageTitle>GoldSignal — Dashboard</PageTitle>
+
+<div class="page-header">
+    <h1>Recent Signals</h1>
+    <button class="btn-refresh" @onclick="LoadSignalsAsync">&#8635; Refresh</button>
+</div>
+
+@if (loading)
+{
+    <div class="loading-indicator">Loading signals&hellip;</div>
+}
+else if (errorMessage is not null)
+{
+    <div class="error-box">
+        <strong>Could not load signals:</strong> @errorMessage
+    </div>
+}
+else if (signals is not null && signals.Count > 0)
+{
+    <div class="table-wrapper">
+        <table class="signal-table">
+            <thead>
+                <tr>
+                    <th>Time (UTC)</th>
+                    <th>Symbol</th>
+                    <th>Action</th>
+                    <th>Entry</th>
+                    <th>SL</th>
+                    <th>TP</th>
+                    <th>Algo</th>
+                    <th>AI Score</th>
+                    <th>Approved</th>
+                    <th>Session</th>
+                    <th>Source</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var s in signals)
+                {
+                    <tr class="@(s.Approved ? "row-approved" : "row-rejected")">
+                        <td>@s.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td>@s.Symbol</td>
+                        <td class="@($"action-{s.Action.ToLowerInvariant()}")">@s.Action</td>
+                        <td>@s.Entry.ToString("F2")</td>
+                        <td>@s.StopLoss.ToString("F2")</td>
+                        <td>@s.TakeProfit.ToString("F2")</td>
+                        <td>@s.AlgoScore.ToString("F0")</td>
+                        <td>@s.AiScore.ToString("F0")</td>
+                        <td class="approved-cell">@(s.Approved ? "✓" : "✗")</td>
+                        <td>@s.Session</td>
+                        <td>@s.Source</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <p class="signal-count">Showing @signals.Count signal(s).</p>
+}
+else
+{
+    <p class="empty-state">No signals recorded yet. Signals appear here after MT5 sends an analysis request.</p>
+}
+
+@code {
+    private List<SignalDto>? signals;
+    private bool loading = true;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync() => await LoadSignalsAsync();
+
+    private async Task LoadSignalsAsync()
+    {
+        loading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            signals = await client.GetFromJsonAsync<List<SignalDto>>("/api/signals/recent");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}
