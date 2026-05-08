@@ -30,14 +30,14 @@ input double MinConfidence = 80;
 input int AlertCooldownMinutes = 10;
 
 input bool UseAiValidation = true;
-input string AiApiUrl = "http://localhost:5000/api/signals/analyze";
+input string AiApiUrl = "http://127.0.0.1:5010/api/signals/analyze";
 input int AiTimeoutMs = 8000;
 input double MinAiScore = 80;
 input bool SendTelegramOnlyIfAiApproved = true;
 
-input bool UseTelegram = false;
-input string TelegramBotToken = "";
-input string TelegramChatId = "";
+input bool UseTelegram = true;
+input string TelegramBotToken = "8566093127:AAHEukZDEAOaZ6gfnKyuDa0ZgINviaYOgkY";
+input string TelegramChatId = "8593102087";
 input int TelegramTimeoutMs = 5000;
 
 string lastSignalKey = "";
