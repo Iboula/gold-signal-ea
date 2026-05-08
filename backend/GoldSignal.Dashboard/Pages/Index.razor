@@ -1,6 +1,7 @@
 @page "/"
 @using Microsoft.AspNetCore.SignalR.Client
 @inject IHttpClientFactory HttpClientFactory
+@inject IConfiguration Configuration
 
 <PageTitle>GoldSignal — Dashboard</PageTitle>
 
@@ -94,27 +95,30 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadSignalsAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var apiBase = Configuration["ApiBaseUrl"] ?? "http://localhost:5010";
+        var hubUrl = $"{apiBase.TrimEnd('/')}/hubs/signals";
 
         hubConnection = new HubConnectionBuilder()
-            .WithUrl("http://localhost:5000/hubs/signals")
+            .WithUrl(hubUrl)
             .WithAutomaticReconnect()
             .Build();
 
         hubConnection.On<SignalDto>("signal-received", signal =>
         {
             signals ??= new List<SignalDto>();
-
             signals.Insert(0, signal);
-
-            if (signals.Count > 200)
-            {
-                signals.RemoveAt(signals.Count - 1);
-            }
-
+            if (signals.Count > 200) signals.RemoveAt(signals.Count - 1);
             InvokeAsync(StateHasChanged);
         });
 
-        await hubConnection.StartAsync();
+        try { await hubConnection.StartAsync(); }
+        catch { /* SignalR failure is non-fatal — polling still works */ }
     }
 
     private async Task LoadSignalsAsync()

@@ -1,4 +1,5 @@
 telegram.conf
+telegram.conf.template
 Config/telegram.conf
 backend/.env
 

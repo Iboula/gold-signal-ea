@@ -3,27 +3,37 @@ services:
     image: postgres:17
     container_name: goldsignal-postgres
     environment:
-      POSTGRES_DB: goldsignal
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT}:5432"
     volumes:
       - goldsignal-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   ai-api:
     build:
       context: ./GoldSignal.Ai.Api
       dockerfile: Dockerfile
     container_name: goldsignal-ai-api
+    env_file:
+      - .env
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      ConnectionStrings__TradingDb: Host=postgres;Port=5432;Database=goldsignal;Username=postgres;Password=postgres
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
+      ConnectionStrings__TradingDb: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      OpenAI__Model: ${OPENAI_MODEL}
+      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN}
+      Telegram__ChatId: ${TELEGRAM_CHAT_ID}
     ports:
-      - "5000:8080"
+      - "${API_PORT}:8080"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
   dashboard:
     build:
@@ -31,10 +41,10 @@ services:
       dockerfile: Dockerfile
     container_name: goldsignal-dashboard
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT}
       ApiBaseUrl: http://ai-api:8080
     ports:
-      - "5001:8080"
+      - "${DASHBOARD_PORT}:8080"
     depends_on:
       - ai-api
 
