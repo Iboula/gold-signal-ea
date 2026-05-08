@@ -1,22 +1,46 @@
 @inherits LayoutComponentBase
 
-<div class="layout-shell">
-    <nav class="sidebar">
-        <div class="sidebar-brand">
-            <span class="brand-icon">&#9651;</span>
-            <span class="brand-text">GoldSignal</span>
-        </div>
-        <ul class="nav-links">
-            <li>
-                <NavLink href="" Match="NavLinkMatch.All" class="nav-link">
-                    Dashboard
-                </NavLink>
-            </li>
-        </ul>
-    </nav>
-    <main class="main-content">
-        <div class="content-wrapper">
+<MudThemeProvider Theme="_theme" IsDarkMode="true" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Color="Color.Dark" Elevation="2">
+        <MudIcon Icon="@Icons.Material.Filled.ShowChart" Class="mr-2" />
+        <MudText Typo="Typo.h6">GoldSignal</MudText>
+        <MudSpacer />
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">XAUUSD AI Signals</MudText>
+    </MudAppBar>
+
+    <MudDrawer Open="true" Variant="DrawerVariant.Persistent" Anchor="Anchor.Left" Elevation="2" ClipMode="DrawerClipMode.Always">
+        <MudNavMenu>
+            <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">
+                Dashboard
+            </MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.ExtraExtraLarge" Class="mt-4">
             @Body
-        </div>
-    </main>
-</div>
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private MudTheme _theme = new MudTheme
+    {
+        PaletteDark = new PaletteDark
+        {
+            Primary = "#FFD700",
+            Secondary = "#B8860B",
+            Background = "#121212",
+            Surface = "#1E1E1E",
+            AppbarBackground = "#1A1A1A",
+            DrawerBackground = "#1A1A1A",
+            DrawerText = "rgba(255,255,255,0.8)",
+            TextPrimary = "rgba(255,255,255,0.87)",
+        }
+    };
+}

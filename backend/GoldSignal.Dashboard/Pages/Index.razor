@@ -5,81 +5,118 @@
 
 <PageTitle>GoldSignal — Dashboard</PageTitle>
 
-<div class="page-header">
-    <h1>GoldSignal Dashboard</h1>
-    <button class="btn-refresh" @onclick="LoadSignalsAsync">↻ Refresh</button>
-</div>
+<MudText Typo="Typo.h5" Class="mb-4" Style="color: #FFD700;">
+    <MudIcon Icon="@Icons.Material.Filled.ShowChart" Class="mr-2" />XAUUSD AI Signals
+</MudText>
 
 @if (loading)
 {
-    <div class="loading-indicator">Loading signals...</div>
+    <MudProgressLinear Color="Color.Warning" Indeterminate="true" Class="mb-4" />
 }
 else if (errorMessage is not null)
 {
-    <div class="error-box">
-        <strong>Could not load signals:</strong> @errorMessage
-    </div>
+    <MudAlert Severity="Severity.Error" Class="mb-4">@errorMessage</MudAlert>
 }
-else if (signals is not null && signals.Count > 0)
-{
-    <div class="stats-grid">
-        <div class="stat-card"><span>Total</span><strong>@signals.Count</strong></div>
-        <div class="stat-card"><span>Approved</span><strong>@ApprovedCount</strong></div>
-        <div class="stat-card"><span>Rejected</span><strong>@RejectedCount</strong></div>
-        <div class="stat-card"><span>Approval Rate</span><strong>@ApprovalRate.ToString("F1")%</strong></div>
-        <div class="stat-card"><span>Avg AI Score</span><strong>@AverageAiScore.ToString("F1")</strong></div>
-    </div>
 
-    <div class="table-wrapper">
-        <table class="signal-table">
-            <thead>
-                <tr>
-                    <th>Time UTC</th>
-                    <th>Symbol</th>
-                    <th>Action</th>
-                    <th>Entry</th>
-                    <th>SL</th>
-                    <th>TP</th>
-                    <th>Algo</th>
-                    <th>AI</th>
-                    <th>Approved</th>
-                    <th>Spread</th>
-                    <th>ATR</th>
-                    <th>Session</th>
-                    <th>AI Comment</th>
-                    <th>Reason</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var s in signals)
-                {
-                    <tr class="@(s.Approved ? "row-approved" : "row-rejected")">
-                        <td>@s.CreatedAtUtc.ToString("yyyy-MM-dd HH:mm")</td>
-                        <td>@s.Symbol</td>
-                        <td class="@($"action-{s.Action.ToLowerInvariant()}")">@s.Action</td>
-                        <td>@s.Entry.ToString("F2")</td>
-                        <td>@s.StopLoss.ToString("F2")</td>
-                        <td>@s.TakeProfit.ToString("F2")</td>
-                        <td>@s.AlgoScore.ToString("F0")</td>
-                        <td>@s.AiScore.ToString("F0")</td>
-                        <td class="approved-cell">@(s.Approved ? "✓" : "✗")</td>
-                        <td>@s.Spread.ToString("F1")</td>
-                        <td>@s.Atr.ToString("F1")</td>
-                        <td>@s.Session</td>
-                        <td class="text-cell">@s.AiComment</td>
-                        <td class="text-cell">@s.Reason</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    </div>
+@* Stats row *@
+<MudGrid Class="mb-4">
+    <MudItem xs="12" sm="6" md="2">
+        <MudCard Elevation="3" Style="background:#1E1E1E;">
+            <MudCardContent Class="pa-3 text-center">
+                <MudText Typo="Typo.caption" Style="color:rgba(255,255,255,0.5);">Total</MudText>
+                <MudText Typo="Typo.h5" Style="color:#FFD700;">@(signals?.Count ?? 0)</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="2">
+        <MudCard Elevation="3" Style="background:#1E1E1E;">
+            <MudCardContent Class="pa-3 text-center">
+                <MudText Typo="Typo.caption" Style="color:rgba(255,255,255,0.5);">Approved</MudText>
+                <MudText Typo="Typo.h5" Style="color:#4CAF50;">@ApprovedCount</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="2">
+        <MudCard Elevation="3" Style="background:#1E1E1E;">
+            <MudCardContent Class="pa-3 text-center">
+                <MudText Typo="Typo.caption" Style="color:rgba(255,255,255,0.5);">Rejected</MudText>
+                <MudText Typo="Typo.h5" Style="color:#F44336;">@RejectedCount</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="2">
+        <MudCard Elevation="3" Style="background:#1E1E1E;">
+            <MudCardContent Class="pa-3 text-center">
+                <MudText Typo="Typo.caption" Style="color:rgba(255,255,255,0.5);">Approval Rate</MudText>
+                <MudText Typo="Typo.h5" Style="color:#FFD700;">@ApprovalRate.ToString("F1")%</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="2">
+        <MudCard Elevation="3" Style="background:#1E1E1E;">
+            <MudCardContent Class="pa-3 text-center">
+                <MudText Typo="Typo.caption" Style="color:rgba(255,255,255,0.5);">Avg AI Score</MudText>
+                <MudText Typo="Typo.h5" Style="color:#FFD700;">@AverageAiScore.ToString("F1")</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="2" Class="d-flex align-center justify-center">
+        <MudButton Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Refresh"
+                   OnClick="LoadSignalsAsync" Disabled="loading">
+            Refresh
+        </MudButton>
+    </MudItem>
+</MudGrid>
 
-    <p class="signal-count">Showing @signals.Count signal(s).</p>
-}
-else
-{
-    <p class="empty-state">No signals recorded yet.</p>
-}
+@* Signals table *@
+<MudTable Items="signals ?? new()" Dense="true" Hover="true" Striped="false" Elevation="3"
+          Style="background:#1E1E1E;" FixedHeader="true" Height="600px">
+    <HeaderContent>
+        <MudTh>Time UTC</MudTh>
+        <MudTh>Symbol</MudTh>
+        <MudTh>Action</MudTh>
+        <MudTh>Entry</MudTh>
+        <MudTh>SL</MudTh>
+        <MudTh>TP</MudTh>
+        <MudTh>Algo</MudTh>
+        <MudTh>AI</MudTh>
+        <MudTh>Status</MudTh>
+        <MudTh>Spread</MudTh>
+        <MudTh>ATR</MudTh>
+        <MudTh>Session</MudTh>
+        <MudTh>AI Comment</MudTh>
+        <MudTh>Reason</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Time UTC">@context.CreatedAtUtc.ToString("MM-dd HH:mm")</MudTd>
+        <MudTd DataLabel="Symbol">@context.Symbol</MudTd>
+        <MudTd DataLabel="Action">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                     Color="@(context.Action.Equals("BUY", StringComparison.OrdinalIgnoreCase) ? Color.Success : Color.Error)">
+                @context.Action
+            </MudChip>
+        </MudTd>
+        <MudTd DataLabel="Entry">@context.Entry.ToString("F2")</MudTd>
+        <MudTd DataLabel="SL">@context.StopLoss.ToString("F2")</MudTd>
+        <MudTd DataLabel="TP">@context.TakeProfit.ToString("F2")</MudTd>
+        <MudTd DataLabel="Algo">@context.AlgoScore.ToString("F0")</MudTd>
+        <MudTd DataLabel="AI">@context.AiScore.ToString("F0")</MudTd>
+        <MudTd DataLabel="Status">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                     Color="@(context.Approved ? Color.Success : Color.Error)">
+                @(context.Approved ? "✓ OK" : "✗ KO")
+            </MudChip>
+        </MudTd>
+        <MudTd DataLabel="Spread">@context.Spread.ToString("F1")</MudTd>
+        <MudTd DataLabel="ATR">@context.Atr.ToString("F1")</MudTd>
+        <MudTd DataLabel="Session">@context.Session</MudTd>
+        <MudTd DataLabel="AI Comment" Style="max-width:250px;white-space:normal;">@context.AiComment</MudTd>
+        <MudTd DataLabel="Reason" Style="max-width:200px;white-space:normal;">@context.Reason</MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Class="pa-4" Style="color:rgba(255,255,255,0.4);">No signals recorded yet.</MudText>
+    </NoRecordsContent>
+</MudTable>
 
 @code {
     private List<SignalDto>? signals;
