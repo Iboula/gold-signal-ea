@@ -1,4 +1,5 @@
 @page "/"
+@using Microsoft.AspNetCore.SignalR.Client
 @inject IHttpClientFactory HttpClientFactory
 
 <PageTitle>GoldSignal — Dashboard</PageTitle>
@@ -83,6 +84,7 @@ else
     private List<SignalDto>? signals;
     private bool loading = true;
     private string? errorMessage;
+    private HubConnection? hubConnection;
 
     private int ApprovedCount => signals?.Count(x => x.Approved) ?? 0;
     private int RejectedCount => (signals?.Count ?? 0) - ApprovedCount;
@@ -92,6 +94,27 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadSignalsAsync();
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl("http://localhost:5000/hubs/signals")
+            .WithAutomaticReconnect()
+            .Build();
+
+        hubConnection.On<SignalDto>("signal-received", signal =>
+        {
+            signals ??= new List<SignalDto>();
+
+            signals.Insert(0, signal);
+
+            if (signals.Count > 200)
+            {
+                signals.RemoveAt(signals.Count - 1);
+            }
+
+            InvokeAsync(StateHasChanged);
+        });
+
+        await hubConnection.StartAsync();
     }
 
     private async Task LoadSignalsAsync()
