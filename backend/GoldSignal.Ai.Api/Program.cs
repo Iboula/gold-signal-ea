@@ -1,4 +1,6 @@
 using GoldSignal.Ai.Api.Data;
+using GoldSignal.Ai.Api.Hubs;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -8,6 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
+builder.Services.AddSignalR();
 
 var connectionString = builder.Configuration.GetConnectionString("TradingDb");
 
@@ -19,7 +22,6 @@ if (!string.IsNullOrWhiteSpace(connectionString))
 
 var app = builder.Build();
 
-// Apply EF Core migrations automatically on startup
 if (!string.IsNullOrWhiteSpace(connectionString))
 {
     using var scope = app.Services.CreateScope();
@@ -53,7 +55,8 @@ app.MapPost("/api/signals/analyze", async (
     IHttpClientFactory httpClientFactory,
     IConfiguration configuration,
     ILoggerFactory loggerFactory,
-    IServiceProvider serviceProvider) =>
+    IServiceProvider serviceProvider,
+    IHubContext<SignalsHub> hubContext) =>
 {
     var logger = loggerFactory.CreateLogger("SignalAnalyzer");
     var apiKey = configuration["OPENAI_API_KEY"];
@@ -106,7 +109,12 @@ app.MapPost("/api/signals/analyze", async (
         validation = ParseValidation(assistantText);
     }
 
-    await PersistSignalIfConfiguredAsync(serviceProvider, request, validation, logger);
+    var savedSignal = await PersistSignalIfConfiguredAsync(serviceProvider, request, validation, logger);
+
+    if (savedSignal is not null)
+    {
+        await hubContext.Clients.All.SendAsync("signal-received", savedSignal);
+    }
 
     logger.LogInformation(
         "Signal {Action} {Symbol} approved={Approved} score={Score}",
@@ -118,9 +126,11 @@ app.MapPost("/api/signals/analyze", async (
     return Results.Ok(validation);
 });
 
+app.MapHub<SignalsHub>("/hubs/signals");
+
 app.Run();
 
-static async Task PersistSignalIfConfiguredAsync(
+static async Task<TradingSignal?> PersistSignalIfConfiguredAsync(
     IServiceProvider serviceProvider,
     SignalRequest request,
     SignalValidationResponse validation,
@@ -131,10 +141,10 @@ static async Task PersistSignalIfConfiguredAsync(
     if (db is null)
     {
         logger.LogInformation("TradingDb connection not configured. Signal persistence skipped.");
-        return;
+        return null;
     }
 
-    db.TradingSignals.Add(new TradingSignal
+    var signal = new TradingSignal
     {
         Symbol = request.Symbol,
         Action = request.Action,
@@ -150,9 +160,12 @@ static async Task PersistSignalIfConfiguredAsync(
         Reason = request.Reason,
         AiComment = validation.Comment,
         Source = "MT5"
-    });
+    };
 
+    db.TradingSignals.Add(signal);
     await db.SaveChangesAsync();
+
+    return signal;
 }
 
 static string BuildPrompt(SignalRequest request) => $$"""
