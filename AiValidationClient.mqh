@@ -20,6 +20,7 @@ string AiJsonEscape(string value)
 }
 
 string BuildAiSignalJson(
+   string symbol,
    string action,
    double entry,
    double sl,
@@ -33,6 +34,7 @@ string BuildAiSignalJson(
 )
 {
    string json = "{";
+   json += "\"symbol\":\"" + AiJsonEscape(symbol) + "\",";
    json += "\"action\":\"" + AiJsonEscape(action) + "\",";
    json += "\"entry\":" + DoubleToString(entry, digits) + ",";
    json += "\"stopLoss\":" + DoubleToString(sl, digits) + ",";

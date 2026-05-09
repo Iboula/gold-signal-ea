@@ -79,7 +79,7 @@ app.MapPost("/api/signals/analyze", async (
             new
             {
                 role = "system",
-                content = "You are an institutional XAUUSD signal validator. Return JSON only."
+                content = "You are an institutional XAUUSD and BTCUSD signal validator. Return JSON only."
             },
             new
             {
@@ -169,13 +169,15 @@ static async Task<TradingSignal?> PersistSignalIfConfiguredAsync(
 }
 
 static string BuildPrompt(SignalRequest request) => $$"""
-Validate this XAUUSD scalp signal.
+Validate this {{request.Symbol}} scalp signal.
 
 Rules:
 - Reject if confidence is weak.
 - Reject if spread is too high for scalping.
 - Reject if ATR is too low or chaotic.
 - Prefer clean sweep + BOS in London or New York session.
+- For BTCUSD, account for wider volatility and spreads; still reject late impulse entries.
+- For XAUUSD, be stricter around session changes, news-like volatility, and wide spreads.
 - Be strict. Do not approve average setups.
 
 Signal:
@@ -265,7 +267,7 @@ static SignalValidationResponse ParseValidation(string assistantText)
 
 public sealed class SignalRequest
 {
-    public string Symbol { get; set; } = "XAUUSD";
+    public string Symbol { get; set; } = "UNKNOWN";
     public string Action { get; set; } = string.Empty;
     public double Entry { get; set; }
     public double StopLoss { get; set; }

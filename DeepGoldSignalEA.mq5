@@ -1,4 +1,4 @@
-#property version   "1.03"
+#property version   "1.04"
 #include "GoldSignalEngine.mqh"
 #include "DeepGoldScalpingStrategy.mqh"
 #include "AiValidationClient.mqh"
@@ -16,6 +16,16 @@ input bool UseAtrStopCap = true;
 input int AtrStopPeriod = 14;
 input double AtrStopMultiplier = 1.5;
 input double MaxStopDistancePoints = 1800.0;
+
+input bool UseAutoSymbolTuning = true;
+input bool BtcTrade24h = true;
+input double BtcSweepPriceDistance = 30.0;
+input double BtcBosConfirmPriceDistance = 10.0;
+input double BtcSLBufferPriceDistance = 60.0;
+input double BtcMaxStopPriceDistance = 350.0;
+input double BtcMaxSpreadPriceDistance = 60.0;
+input double BtcMinAtrPriceDistance = 25.0;
+input double BtcMaxAtrPriceDistance = 300.0;
 
 input bool UseSessionFilter = true;
 input int LondonStartHour = 8;
@@ -43,8 +53,18 @@ input int TelegramTimeoutMs = 5000;
 string lastSignalKey = "";
 datetime lastAlertTime = 0;
 
+bool IsBtcSymbol()
+{
+   string symbol = _Symbol;
+   StringToUpper(symbol);
+   return StringFind(symbol, "BTC") >= 0 || StringFind(symbol, "XBT") >= 0;
+}
+
 bool IsSessionOk()
 {
+   if(UseAutoSymbolTuning && BtcTrade24h && IsBtcSymbol())
+      return true;
+
    if(!UseSessionFilter)
       return true;
 
@@ -55,6 +75,9 @@ bool IsSessionOk()
 
 bool IsNoTradeTime()
 {
+   if(UseAutoSymbolTuning && BtcTrade24h && IsBtcSymbol())
+      return false;
+
    if(!UseNoTradeWindow)
       return false;
 
@@ -72,18 +95,90 @@ double SpreadPoints()
    return (SymbolInfoDouble(_Symbol, SYMBOL_ASK) - SymbolInfoDouble(_Symbol, SYMBOL_BID)) / _Point;
 }
 
-bool AtrOk(double atrPoints)
+string ActiveProfileName()
 {
-   if(MinAtrPoints > 0 && atrPoints < MinAtrPoints)
+   if(UseAutoSymbolTuning && IsBtcSymbol())
+      return "BTC";
+
+   return "XAU/default";
+}
+
+double PriceDistanceToPoints(double priceDistance, double fallbackPoints)
+{
+   if(_Point <= 0.0 || priceDistance <= 0.0)
+      return fallbackPoints;
+
+   return priceDistance / _Point;
+}
+
+double EffectiveDeepSweepPoints()
+{
+   if(UseAutoSymbolTuning && IsBtcSymbol())
+      return PriceDistanceToPoints(BtcSweepPriceDistance, DeepSweepPoints);
+
+   return DeepSweepPoints;
+}
+
+double EffectiveDeepBosConfirmPoints()
+{
+   if(UseAutoSymbolTuning && IsBtcSymbol())
+      return PriceDistanceToPoints(BtcBosConfirmPriceDistance, DeepBosConfirmPoints);
+
+   return DeepBosConfirmPoints;
+}
+
+double EffectiveDeepSLBufferPoints()
+{
+   if(UseAutoSymbolTuning && IsBtcSymbol())
+      return PriceDistanceToPoints(BtcSLBufferPriceDistance, DeepSLBufferPoints);
+
+   return DeepSLBufferPoints;
+}
+
+double EffectiveMaxStopDistancePoints()
+{
+   if(UseAutoSymbolTuning && IsBtcSymbol())
+      return PriceDistanceToPoints(BtcMaxStopPriceDistance, MaxStopDistancePoints);
+
+   return MaxStopDistancePoints;
+}
+
+double EffectiveMaxSpreadPoints()
+{
+   if(UseAutoSymbolTuning && IsBtcSymbol())
+      return PriceDistanceToPoints(BtcMaxSpreadPriceDistance, MaxSpreadPoints);
+
+   return MaxSpreadPoints;
+}
+
+double EffectiveMinAtrPoints()
+{
+   if(UseAutoSymbolTuning && IsBtcSymbol())
+      return PriceDistanceToPoints(BtcMinAtrPriceDistance, MinAtrPoints);
+
+   return MinAtrPoints;
+}
+
+double EffectiveMaxAtrPoints()
+{
+   if(UseAutoSymbolTuning && IsBtcSymbol())
+      return PriceDistanceToPoints(BtcMaxAtrPriceDistance, MaxAtrPoints);
+
+   return MaxAtrPoints;
+}
+
+bool AtrOk(double atrPoints, double minAtrPoints, double maxAtrPoints)
+{
+   if(minAtrPoints > 0 && atrPoints < minAtrPoints)
       return false;
 
-   if(MaxAtrPoints > 0 && atrPoints > MaxAtrPoints)
+   if(maxAtrPoints > 0 && atrPoints > maxAtrPoints)
       return false;
 
    return true;
 }
 
-double ScoreSignal(const SignalResult &signal, double spread, double atrPoints)
+double ScoreSignal(const SignalResult &signal, double spread, double atrPoints, double maxSpreadPoints, double minAtrPoints, double maxAtrPoints, double tpR)
 {
    if(signal.action == SIGNAL_WAIT)
       return 0.0;
@@ -93,19 +188,19 @@ double ScoreSignal(const SignalResult &signal, double spread, double atrPoints)
    if(IsSessionOk())
       score += 5.0;
 
-   if(spread <= MaxSpreadPoints * 0.60)
+   if(maxSpreadPoints > 0.0 && spread <= maxSpreadPoints * 0.60)
       score += 4.0;
 
-   if(atrPoints >= MinAtrPoints && atrPoints <= MaxAtrPoints)
+   if(AtrOk(atrPoints, minAtrPoints, maxAtrPoints))
       score += 5.0;
 
-   if(DeepTP1RR >= 2.0)
+   if(tpR >= 2.0)
       score += 3.0;
 
    return MathMin(score, 95.0);
 }
 
-string BlockReason(double spread, double atrPoints, double score)
+string BlockReason(double spread, double atrPoints, double score, double maxSpreadPoints, double minAtrPoints, double maxAtrPoints)
 {
    if(!IsSessionOk())
       return "Hors session";
@@ -113,10 +208,10 @@ string BlockReason(double spread, double atrPoints, double score)
    if(IsNoTradeTime())
       return "Fenetre no-trade";
 
-   if(spread > MaxSpreadPoints)
+   if(maxSpreadPoints > 0.0 && spread > maxSpreadPoints)
       return "Spread trop eleve";
 
-   if(!AtrOk(atrPoints))
+   if(!AtrOk(atrPoints, minAtrPoints, maxAtrPoints))
       return "ATR hors limite";
 
    if(score < MinConfidence)
@@ -240,8 +335,9 @@ void LogSignal(const SignalResult &signal, double score, double spread, double a
 
 string BuildSignalMessage(const SignalResult &signal, double score, double spread, double atrPoints, string aiComment)
 {
-   string msg = "Deep Gold Scalp " + SignalActionToString(signal.action) + "\n";
+   string msg = "Deep Scalp " + SignalActionToString(signal.action) + "\n";
    msg += "Symbol: " + _Symbol + "\n";
+   msg += "Profile: " + ActiveProfileName() + "\n";
    msg += "Entry: " + DoubleToString(signal.entry, _Digits) + "\n";
    msg += "SL: " + DoubleToString(signal.sl, _Digits) + "\n";
    msg += "TP1: " + DoubleToString(signal.tp1, _Digits) + "\n";
@@ -256,23 +352,31 @@ string BuildSignalMessage(const SignalResult &signal, double score, double sprea
 
 void OnTick()
 {
+   double sweepPoints = EffectiveDeepSweepPoints();
+   double confirmPoints = EffectiveDeepBosConfirmPoints();
+   double bufferPoints = EffectiveDeepSLBufferPoints();
+   double maxStopPoints = EffectiveMaxStopDistancePoints();
+   double maxSpreadPoints = EffectiveMaxSpreadPoints();
+   double minAtrPoints = EffectiveMinAtrPoints();
+   double maxAtrPoints = EffectiveMaxAtrPoints();
+
    SignalResult signal = AnalyzeDeepScalp(
       DeepRangeBars,
       DeepBosBars,
-      DeepSweepPoints,
-      DeepBosConfirmPoints,
-      DeepSLBufferPoints,
+      sweepPoints,
+      confirmPoints,
+      bufferPoints,
       DeepTP1RR,
       UseAtrStopCap,
       AtrStopPeriod,
       AtrStopMultiplier,
-      MaxStopDistancePoints
+      maxStopPoints
    );
 
    double spread = SpreadPoints();
    double atrPoints = GetATRValue(PERIOD_M5, AtrStopPeriod, 1) / _Point;
-   double algoScore = ScoreSignal(signal, spread, atrPoints);
-   string block = BlockReason(spread, atrPoints, algoScore);
+   double algoScore = ScoreSignal(signal, spread, atrPoints, maxSpreadPoints, minAtrPoints, maxAtrPoints, DeepTP1RR);
+   string block = BlockReason(spread, atrPoints, algoScore, maxSpreadPoints, minAtrPoints, maxAtrPoints);
 
    double finalScore = algoScore;
    bool aiApproved = !UseAiValidation;
@@ -284,6 +388,7 @@ void OnTick()
    {
       string sessionLabel = IsSessionOk() ? "OK" : "OUT";
       string json = BuildAiSignalJson(
+         _Symbol,
          SignalActionToString(signal.action),
          signal.entry,
          signal.sl,
@@ -309,8 +414,9 @@ void OnTick()
 
    LogSignal(signal, finalScore, spread, atrPoints, block);
 
-   string text="Deep Gold Scalping EA v1.03\n";
+   string text="Deep Scalping EA v1.04\n";
    text+="Mode: SIGNAL ONLY\n";
+   text+="Profile: "+ActiveProfileName()+"\n";
    text+="Action: "+SignalActionToString(signal.action)+"\n";
    text+="Entry: "+DoubleToString(signal.entry,_Digits)+"\n";
    text+="SL: "+DoubleToString(signal.sl,_Digits)+"\n";
@@ -319,7 +425,9 @@ void OnTick()
    text+="Final Score: "+DoubleToString(finalScore,1)+"\n";
    text+="AI: "+(UseAiValidation ? (aiApproved ? "APPROVED" : "NOT APPROVED") : "OFF")+"\n";
    text+="Spread: "+DoubleToString(spread,1)+"\n";
+   text+="Max Spread: "+DoubleToString(maxSpreadPoints,1)+" pts\n";
    text+="ATR M5: "+DoubleToString(atrPoints,1)+" pts\n";
+   text+="ATR Limits: "+DoubleToString(minAtrPoints,1)+"-"+DoubleToString(maxAtrPoints,1)+" pts\n";
    text+="Session OK: "+(IsSessionOk()?"YES":"NO")+"\n";
    text+="NoTrade: "+(IsNoTradeTime()?"YES":"NO")+"\n";
    text+="Telegram: "+(UseTelegram?"ON":"OFF")+"\n";
