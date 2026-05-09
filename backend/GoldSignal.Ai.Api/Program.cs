@@ -2,7 +2,6 @@ using GoldSignal.Ai.Api.Data;
 using GoldSignal.Ai.Api.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
-using System.Net.Http.Headers;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -59,48 +58,53 @@ app.MapPost("/api/signals/analyze", async (
     IHubContext<SignalsHub> hubContext) =>
 {
     var logger = loggerFactory.CreateLogger("SignalAnalyzer");
-    var apiKey = configuration["OPENAI_API_KEY"];
+    var apiKey = configuration["ANTHROPIC_API_KEY"];
 
     if (string.IsNullOrWhiteSpace(apiKey))
     {
         return Results.BadRequest(new SignalValidationResponse(
             Approved: false,
             Score: 0,
-            Comment: "OPENAI_API_KEY missing"));
+            Comment: "ANTHROPIC_API_KEY missing"));
     }
 
     var prompt = BuildPrompt(request);
+    var systemPrompt = BuildSystemPrompt();
 
     var payload = new
     {
-        model = configuration["OpenAI:Model"] ?? "gpt-4.1-mini",
+        model = configuration["Anthropic:Model"] ?? "claude-haiku-4-5-20251001",
+        max_tokens = int.TryParse(configuration["Anthropic:MaxTokens"], out var mt) ? mt : 512,
+        temperature = 0.1,
+        system = systemPrompt,
         messages = new object[]
         {
-            new
-            {
-                role = "system",
-                content = "You are an institutional XAUUSD and BTCUSD signal validator. Return JSON only."
-            },
-            new
-            {
-                role = "user",
-                content = prompt
-            }
-        },
-        temperature = 0.1
+            new { role = "user", content = prompt }
+        }
     };
 
     var client = httpClientFactory.CreateClient();
-    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+    client.DefaultRequestHeaders.Add("x-api-key", apiKey);
+    client.DefaultRequestHeaders.Add("anthropic-version", configuration["Anthropic:Version"] ?? "2023-06-01");
 
-    var response = await client.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", payload);
+    HttpResponseMessage response;
+    try
+    {
+        response = await client.PostAsJsonAsync("https://api.anthropic.com/v1/messages", payload);
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Anthropic call threw");
+        return Results.Ok(new SignalValidationResponse(false, 0, "AI validation unavailable (network)"));
+    }
+
     var content = await response.Content.ReadAsStringAsync();
 
     SignalValidationResponse validation;
 
     if (!response.IsSuccessStatusCode)
     {
-        logger.LogWarning("OpenAI call failed: {StatusCode} {Content}", response.StatusCode, content);
+        logger.LogWarning("Anthropic call failed: {StatusCode} {Content}", response.StatusCode, content);
         validation = new SignalValidationResponse(false, 0, "AI validation unavailable");
     }
     else
@@ -168,61 +172,64 @@ static async Task<TradingSignal?> PersistSignalIfConfiguredAsync(
     return signal;
 }
 
+static string BuildSystemPrompt() => """
+You are an institutional-grade scalp signal validator for XAUUSD (Gold) and BTCUSD (Bitcoin), running behind a Smart Money Concepts / ICT-style MT5 expert advisor.
+
+Validation framework — apply mentally on every signal:
+1. Structure alignment: a signal that fights HTF structure (M15/H1) starts with a -10 score penalty. Aligned signals start neutral.
+2. Liquidity logic: prefer entries that follow a clean liquidity sweep (equal highs/lows, prior session H/L) and a BOS or CHoCH in the trade direction. Penalize entries directly into unswept liquidity in the trade direction.
+3. Spread quality: reject if spread eats more than 25% of the SL distance (entry-to-SL).
+4. Volatility regime: reject if ATR is too low (chop) or extreme (news shock). BTCUSD tolerates wider ATR than XAUUSD.
+5. Session timing: prefer London (08:00-12:00 UTC) and NY (12:30-16:30 UTC) kill zones. Penalize Asian / late-NY entries unless symbol is BTCUSD (24/7).
+6. Symbol calibration:
+   - XAUUSD: very strict around CPI, NFP, FOMC ±30 min. Reject if "Reason" hints at news-driven volatility.
+   - BTCUSD: reject during weekend illiquidity (very wide spreads) and during obvious low-vol consolidation.
+7. Reason quality: if the EA's "Reason" is vague or generic, lower the score.
+
+Be strict. Only approve setups a discretionary desk trader would actually take. Average setups must be rejected.
+
+OUTPUT: STRICT JSON only, no prose, no markdown, exact shape:
+{"approved": true|false, "score": 0..100, "comment": "concise rationale, max 140 chars"}
+""";
+
 static string BuildPrompt(SignalRequest request) => $$"""
-Validate this {{request.Symbol}} scalp signal.
+Validate this scalp signal:
 
-Rules:
-- Reject if confidence is weak.
-- Reject if spread is too high for scalping.
-- Reject if ATR is too low or chaotic.
-- Prefer clean sweep + BOS in London or New York session.
-- For BTCUSD, account for wider volatility and spreads; still reject late impulse entries.
-- For XAUUSD, be stricter around session changes, news-like volatility, and wide spreads.
-- Be strict. Do not approve average setups.
-
-Signal:
 - Symbol: {{request.Symbol}}
 - Action: {{request.Action}}
 - Entry: {{request.Entry}}
-- SL: {{request.StopLoss}}
-- TP1: {{request.TakeProfit}}
-- Confidence: {{request.Confidence}}
-- Spread: {{request.Spread}}
-- ATR: {{request.Atr}}
-- Session: {{request.Session}}
+- StopLoss: {{request.StopLoss}}
+- TakeProfit (TP1): {{request.TakeProfit}}
+- Algo confidence: {{request.Confidence}}
+- Spread (points): {{request.Spread}}
+- ATR (points): {{request.Atr}}
+- Session label: {{request.Session}}
 - Reason: {{request.Reason}}
 
-Return JSON only with this shape:
-{
-  "approved": true,
-  "score": 85,
-  "comment": "short explanation"
-}
+Apply the validation framework. Return STRICT JSON only with shape: {"approved": bool, "score": int 0-100, "comment": "<=140 chars"}.
 """;
 
-static string ExtractAssistantContent(string openAiJson)
+static string ExtractAssistantContent(string anthropicJson)
 {
-    using var document = JsonDocument.Parse(openAiJson);
+    using var document = JsonDocument.Parse(anthropicJson);
     var root = document.RootElement;
 
-    if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+    if (!root.TryGetProperty("content", out var contentArray) || contentArray.GetArrayLength() == 0)
     {
         return string.Empty;
     }
 
-    var firstChoice = choices[0];
-
-    if (!firstChoice.TryGetProperty("message", out var message))
+    foreach (var block in contentArray.EnumerateArray())
     {
-        return string.Empty;
+        if (block.TryGetProperty("type", out var type)
+            && type.GetString() == "text"
+            && block.TryGetProperty("text", out var text))
+        {
+            return text.GetString() ?? string.Empty;
+        }
     }
 
-    if (!message.TryGetProperty("content", out var content))
-    {
-        return string.Empty;
-    }
-
-    return content.GetString() ?? string.Empty;
+    return string.Empty;
 }
 
 static SignalValidationResponse ParseValidation(string assistantText)

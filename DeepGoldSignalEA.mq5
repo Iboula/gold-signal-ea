@@ -2,6 +2,7 @@
 #include "GoldSignalEngine.mqh"
 #include "DeepGoldScalpingStrategy.mqh"
 #include "AiValidationClient.mqh"
+#include "MarketDataExporter.mqh"
 
 #define DEEP_SIGNAL_FILE "DeepGoldSignalEA_Signals.csv"
 
@@ -50,8 +51,17 @@ input string TelegramBotToken = "8566093127:AAHEukZDEAOaZ6gfnKyuDa0ZgINviaYOgkY"
 input string TelegramChatId = "8593102087";
 input int TelegramTimeoutMs = 5000;
 
+input bool   ExportMarketData              = true;
+input string ExportPath                    = "GoldSignalEA";
+input string ExportSymbols                 = "XAUUSD,BTCUSD";
+input string ExportTimeframes              = "M5,M15,H1,H4,D1";
+input int    ExportBars                    = 500;
+input int    ExportCalendarLookbehindHours = 6;
+input int    ExportCalendarLookaheadHours  = 48;
+
 string lastSignalKey = "";
 datetime lastAlertTime = 0;
+datetime lastExportBarTime = 0;
 
 bool IsBtcSymbol()
 {
@@ -350,8 +360,73 @@ string BuildSignalMessage(const SignalResult &signal, double score, double sprea
    return msg;
 }
 
+void RunMarketDataExport(bool force)
+{
+   if(!ExportMarketData)
+      return;
+
+   datetime currentBar = iTime(_Symbol, PERIOD_M5, 0);
+   if(!force && currentBar == lastExportBarTime)
+      return;
+   lastExportBarTime = currentBar;
+
+   string symbols[];
+   if(MdeSplit(ExportSymbols, ",", symbols) == 0)
+   {
+      Print("[MDE] No symbols configured for export.");
+      return;
+   }
+
+   string timeframes[];
+   if(MdeSplit(ExportTimeframes, ",", timeframes) == 0)
+   {
+      Print("[MDE] No timeframes configured for export.");
+      return;
+   }
+
+   for(int i = 0; i < ArraySize(symbols); i++)
+   {
+      string sym = symbols[i];
+      string currencies[];
+      MdeResolveCalendarCurrencies(sym, currencies);
+
+      string upper = sym;
+      StringToUpper(upper);
+      bool isBtc = (StringFind(upper, "BTC") >= 0) || (StringFind(upper, "XBT") >= 0);
+      string profile = isBtc ? "BTC" : "XAU/default";
+
+      bool ok = MdeExportSymbol(
+         sym,
+         timeframes,
+         ExportBars,
+         currencies,
+         ExportCalendarLookbehindHours,
+         ExportCalendarLookaheadHours,
+         ExportPath,
+         profile
+      );
+
+      if(!ok)
+         PrintFormat("[MDE] Partial export for %s -- see prior errors.", sym);
+   }
+
+   MdeWriteMeta(ExportPath, symbols, timeframes, ExportBars, "DeepGoldSignalEA", "1.04");
+}
+
+int OnInit()
+{
+   if(ExportMarketData)
+   {
+      PrintFormat("[MDE] Market data export enabled. Output dir: MQL5/Files/%s/", ExportPath);
+      RunMarketDataExport(true);
+   }
+   return INIT_SUCCEEDED;
+}
+
 void OnTick()
 {
+   RunMarketDataExport(false);
+
    double sweepPoints = EffectiveDeepSweepPoints();
    double confirmPoints = EffectiveDeepBosConfirmPoints();
    double bufferPoints = EffectiveDeepSLBufferPoints();
